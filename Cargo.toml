@@ -1,0 +1,15 @@
+[package]
+name = "rmp-rpc"
+version = "0.1.0"
+authors = ["Corentin Henry <corentinhenry@gmail.com>"]
+
+[dependencies]
+rmpv = "*"
+rmp = "*"
+error-chain = "*"
+bytes = "*"
+futures = "*"
+tokio-io = "*"
+tokio-proto = "*"
+tokio-service = "*"
+clippy = { version = "*", optional = true}
