@@ -18,4 +18,4 @@ extern crate tokio_service;
 pub mod errors;
 pub mod message;
 pub mod codec;
-// pub mod server;
+pub mod server;

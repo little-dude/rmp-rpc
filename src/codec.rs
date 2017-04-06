@@ -8,8 +8,8 @@ pub struct Codec;
 
 impl Decoder for Codec {
     type Item = Message;
-    type Error = DecodeError;
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+    type Error = io::Error;
+    fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Self::Item>> {
         let res: Result<Option<Self::Item>, Self::Error>;
         let position = {
             let mut buf = io::Cursor::new(&src);
@@ -18,14 +18,20 @@ impl Decoder for Codec {
                     Ok(message) => {
                         res = Ok(Some(message));
                         break;
-                    }
-                    Err(DecodeError::Truncated) => {
-                        return Ok(None);
-                    }
-                    Err(_) => {
-                        continue;
-                    }
-                };
+                    },
+                    Err(err) => match err {
+                        DecodeError::Truncated => {
+                            return Ok(None);
+                        },
+                        DecodeError::Malformed | DecodeError::Invalid => {
+                            continue;
+                        },
+                        DecodeError::UnknownIo(io_err) => {
+                            res = Err(io_err);
+                            break;
+                        },
+                    },
+                }
             }
             buf.position() as usize
         };
@@ -48,7 +54,8 @@ impl Encoder for Codec {
 
 #[test]
 fn decode() {
-    fn try_decode(input: &[u8], rest: &[u8]) -> Result<Option<Message>, DecodeError> {
+    use message::Request;
+    fn try_decode(input: &[u8], rest: &[u8]) -> io::Result<Option<Message>> {
         let mut codec = Codec {};
         let mut buf = BytesMut::from(input);
         let result = codec.decode(&mut buf);
