@@ -16,4 +16,3 @@ impl<T: AsyncRead + AsyncWrite + 'static> ServerProto<T> for MsgPackRpcServerPro
         Ok(io.framed(Codec))
     }
 }
-

@@ -18,19 +18,21 @@ impl Decoder for Codec {
                     Ok(message) => {
                         res = Ok(Some(message));
                         break;
-                    },
-                    Err(err) => match err {
-                        DecodeError::Truncated => {
-                            return Ok(None);
-                        },
-                        DecodeError::Malformed | DecodeError::Invalid => {
-                            continue;
-                        },
-                        DecodeError::UnknownIo(io_err) => {
-                            res = Err(io_err);
-                            break;
-                        },
-                    },
+                    }
+                    Err(err) => {
+                        match err {
+                            DecodeError::Truncated => {
+                                return Ok(None);
+                            }
+                            DecodeError::Malformed | DecodeError::Invalid => {
+                                continue;
+                            }
+                            DecodeError::UnknownIo(io_err) => {
+                                res = Err(io_err);
+                                break;
+                            }
+                        }
+                    }
                 }
             }
             buf.position() as usize

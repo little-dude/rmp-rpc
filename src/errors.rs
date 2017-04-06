@@ -84,7 +84,8 @@ impl From<io::Error> for DecodeError {
 impl From<decode::Error> for DecodeError {
     fn from(err: decode::Error) -> DecodeError {
         match err {
-            decode::Error::InvalidMarkerRead(io_err) | decode::Error::InvalidDataRead(io_err) => From::from(io_err),
+            decode::Error::InvalidMarkerRead(io_err) |
+            decode::Error::InvalidDataRead(io_err) => From::from(io_err),
         }
     }
 }
