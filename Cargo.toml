@@ -12,4 +12,5 @@ futures = "*"
 tokio-io = "*"
 tokio-proto = "*"
 tokio-service = "*"
+futures-cpupool = "*"
 clippy = { version = "*", optional = true}

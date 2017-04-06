@@ -10,6 +10,7 @@ extern crate rmpv;
 extern crate rmp;
 extern crate bytes;
 extern crate futures;
+extern crate futures_cpupool;
 extern crate tokio_io;
 extern crate tokio_proto;
 extern crate tokio_service;
