@@ -1,14 +1,13 @@
 // use std::collections::BTreeMap;
 use std::io;
-use futures_cpupool::Builder;
 use tokio_proto::pipeline::ServerProto;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::Framed;
 use tokio_service::Service;
-use futures::{future, Future, BoxFuture};
+use futures::{Future, BoxFuture};
 use codec::Codec;
-use message::{Message, Request, Response};
-use rmpv::{Value};
+use message::{Message, Response};
+use rmpv::Value;
 use futures_cpupool::CpuPool;
 use std::marker::Sync;
 
@@ -24,10 +23,8 @@ impl<T: AsyncRead + AsyncWrite + 'static> ServerProto<T> for Proto {
     }
 }
 
-pub trait Serve {
-    fn dispatch(&self, method: &str, params: &[Value]) -> Result<Value, Value> {
-        unimplemented!()
-    }
+pub trait Serve: Send + Sync + Clone + 'static {
+    fn dispatch(&self, method: &str, params: &[Value]) -> Result<Value, Value>;
 }
 
 pub struct Server<T: Serve> {
@@ -36,7 +33,7 @@ pub struct Server<T: Serve> {
 }
 
 impl<T: Serve> Server<T> {
-    fn new(server: T) -> Self {
+    pub fn new(server: T) -> Self {
         Server {
             server: server,
             thread_pool: CpuPool::new(10),
@@ -44,7 +41,7 @@ impl<T: Serve> Server<T> {
     }
 }
 
-impl<T: Serve + Sync> Service for Server<T> {
+impl<T: Serve> Service for Server<T> {
     type Request = Message;
     type Response = Message;
     type Error = io::Error;
@@ -53,25 +50,26 @@ impl<T: Serve + Sync> Service for Server<T> {
     fn call(&self, message: Self::Request) -> Self::Future {
         match message {
             Message::Request(request) => {
-                let future = self.thread_pool.spawn_fn(|| {
-                    match self.server.dispatch(request.method.as_str(), &request.params) {
+                let dispatcher = self.server.clone();
+                let future = self.thread_pool.spawn_fn(move || {
+                    match dispatcher.dispatch(request.method.as_str(), &request.params) {
                         Ok(value) => {
                             Ok(Message::Response(Response {
                                 id: request.id,
                                 result: Ok(value),
                             }))
-                        },
+                        }
                         Err(value) => {
                             Ok(Message::Response(Response {
                                 id: request.id,
                                 result: Err(value),
                             }))
-                        },
+                        }
                     }
                 });
 
                 future.boxed()
-            },
+            }
             // TODO: Notifications
             _ => unimplemented!(),
         }
