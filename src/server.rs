@@ -23,25 +23,31 @@ impl<T: AsyncRead + AsyncWrite + 'static> ServerProto<T> for Proto {
     }
 }
 
-pub trait Serve: Send + Sync + Clone + 'static {
+// FIXME: The 'static bound is quite limiting because it means that we can implement Dispatch for
+// types like Foo<'a>. It is required because in Service.call(), we move a dispatcher into a
+// closure, and it has to live long enough inside this closure, i.e. at least as long as the
+// closure lives.
+//
+// Is this even fixable?
+pub trait Dispatch: Send + Sync + Clone + 'static {
     fn dispatch(&self, method: &str, params: &[Value]) -> Result<Value, Value>;
 }
 
-pub struct Server<T: Serve> {
-    server: T,
+pub struct Server<T: Dispatch> {
+    dispatcher: T,
     thread_pool: CpuPool,
 }
 
-impl<T: Serve> Server<T> {
-    pub fn new(server: T) -> Self {
+impl<T: Dispatch> Server<T> {
+    pub fn new(dispatcher: T) -> Self {
         Server {
-            server: server,
+            dispatcher: dispatcher,
             thread_pool: CpuPool::new(10),
         }
     }
 }
 
-impl<T: Serve> Service for Server<T> {
+impl<T: Dispatch> Service for Server<T> {
     type Request = Message;
     type Response = Message;
     type Error = io::Error;
@@ -50,7 +56,7 @@ impl<T: Serve> Service for Server<T> {
     fn call(&self, message: Self::Request) -> Self::Future {
         match message {
             Message::Request(request) => {
-                let dispatcher = self.server.clone();
+                let dispatcher = self.dispatcher.clone();
                 let future = self.thread_pool.spawn_fn(move || {
                     match dispatcher.dispatch(request.method.as_str(), &request.params) {
                         Ok(value) => {
