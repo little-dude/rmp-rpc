@@ -19,3 +19,7 @@ pub mod errors;
 pub mod message;
 pub mod codec;
 pub mod server;
+
+pub mod msgpack {
+    pub use rmpv::{Value, Integer, Utf8String};
+}
