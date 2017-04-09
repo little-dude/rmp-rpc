@@ -1,7 +1,6 @@
 use std::io;
 use tokio_service::Service;
 use futures::{Future, BoxFuture};
-use codec::Codec;
 use message::{Message, Response};
 use rmpv::Value;
 use futures_cpupool::CpuPool;
