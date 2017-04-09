@@ -1,16 +1,21 @@
 [package]
 name = "rmp-rpc"
-version = "0.1.0"
+version = "0.0.1"
 authors = ["Corentin Henry <corentinhenry@gmail.com>"]
+description = "a msgpack-rpc client and server based on tokio"
+homepage = "https://github.com/little-dude/rmp-rpc"
+repository = "https://github.com/little-dude/rmp-rpc"
+readme = "README.md"
+keywords = ["msgpack", "rpc", "msgpack-rpc"]
+license-file = "LICENSE-MIT"
 
 [dependencies]
-rmpv = "*"
-rmp = "*"
-error-chain = "*"
-bytes = "*"
-futures = "*"
-tokio-io = "*"
-tokio-proto = "*"
-tokio-service = "*"
-futures-cpupool = "*"
+rmpv = "^0.3.4"
+rmp = "^0.8.5"
+bytes = "^0.4.2"
+futures = "^0.1.13"
+tokio-io = "^0.1.1"
+tokio-proto = "^0.1.1"
+tokio-service = "^0.1.0"
+futures-cpupool = "^0.1.5"
 clippy = { version = "*", optional = true}
