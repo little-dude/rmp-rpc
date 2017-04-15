@@ -30,7 +30,7 @@ use std::marker::Sync;
 /// pub struct HelloWorld;
 ///
 /// impl Dispatch for HelloWorld {
-///     fn dispatch(&self, method: &str, _params: &[Value]) -> Result<Value, Value> {
+///     fn dispatch(&mut self, method: &str, _params: &[Value]) -> Result<Value, Value> {
 ///         match method {
 ///             "hello" => { Ok(Value::String(Utf8String::from("hello"))) }
 ///             "world" => { Ok(Value::String(Utf8String::from("world"))) }
@@ -46,7 +46,7 @@ use std::marker::Sync;
 pub trait Dispatch: Send + Sync + Clone + 'static {
     /// Respond a request. `method` is the name of the `MessagePack-RPC` method that was called, and
     /// `params` its arguments.
-    fn dispatch(&self, method: &str, params: &[Value]) -> Result<Value, Value>;
+    fn dispatch(&mut self, method: &str, params: &[Value]) -> Result<Value, Value>;
 }
 
 /// A `MessagePack-RPC` server. It calls a dispatcher to answer requests.
@@ -76,7 +76,7 @@ impl<T: Dispatch> Service for Server<T> {
             Message::Request(request) => {
                 // FIXME: The whole dispatcher is cloned for every request won't that kill
                 // performances ? How could we avoid that?
-                let dispatcher = self.dispatcher.clone();
+                let mut dispatcher = self.dispatcher.clone();
 
                 // FIXME: is that how we are supposed to create futures?
                 // `self.thread_pool::spawn_fn` will create a new thread for each request, that
