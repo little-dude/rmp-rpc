@@ -50,7 +50,5 @@ impl Dispatch for Calculator {
 fn main() {
     let addr = "127.0.0.1:54321".parse().unwrap();
     let tcp_server = TcpServer::new(Protocol, addr);
-    tcp_server.serve(|| {
-        Ok(Server::new(Calculator{}))
-    });
+    tcp_server.serve(|| { Ok(Server::new(Calculator)) });
 }

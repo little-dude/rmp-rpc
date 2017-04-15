@@ -1,14 +1,16 @@
 use std::io;
 use bytes::{BytesMut, BufMut};
 use tokio_io::codec::{Encoder, Decoder};
+use tokio_proto::multiplex::RequestId;
 use errors::DecodeError;
 use message::Message;
 
 pub struct Codec;
 
 impl Decoder for Codec {
-    type Item = Message;
+    type Item = (RequestId, Message);
     type Error = io::Error;
+
     fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Self::Item>> {
         let res: Result<Option<Self::Item>, Self::Error>;
         let position = {
@@ -16,7 +18,15 @@ impl Decoder for Codec {
             loop {
                 match Message::decode(&mut buf) {
                     Ok(message) => {
-                        res = Ok(Some(message));
+                        res = match message {
+                            Message::Request(msg) => {
+                                Ok(Some((msg.id as RequestId, Message::Request(msg))))
+                            }
+                            Message::Response(msg) => {
+                                Ok(Some((msg.id as RequestId, Message::Response(msg))))
+                            }
+                            _ => Ok(Some((u64::max_value() as RequestId, message))),
+                        };
                         break;
                     }
                     Err(err) => {
@@ -43,11 +53,21 @@ impl Decoder for Codec {
 }
 
 impl Encoder for Codec {
-    type Item = Message;
+    type Item = (RequestId, Message);
     type Error = io::Error;
 
-    fn encode(&mut self, msg: Message, buf: &mut BytesMut) -> io::Result<()> {
-        let data = msg.pack();
+    fn encode(&mut self, input: Self::Item, buf: &mut BytesMut) -> io::Result<()> {
+        let mut input = input;
+        match input.1 {
+            Message::Request(ref mut message) => {
+                message.id = (input.0 & u32::max_value() as u64) as u32;
+            }
+            Message::Response(ref mut message) => {
+                message.id = (input.0 & u32::max_value() as u64) as u32;
+            }
+            _ => {}
+        }
+        let data = input.1.pack();
         buf.reserve(data.len());
         buf.put_slice(&data);
         Ok(())

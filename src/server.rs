@@ -70,21 +70,15 @@ impl<T: Dispatch> Service for Server<T> {
                 // FIXME: The whole dispatcher is cloned for every request won't that kill
                 // performances ? How could we avoid that?
                 let dispatcher = self.dispatcher.clone();
+
+                // FIXME: is that how we are supposed to create futures?
+                // `self.thread_pool::spawn_fn` will create a new thread for each request, that
+                // seems overkill..
                 let future = self.thread_pool.spawn_fn(move || {
-                    match dispatcher.dispatch(request.method.as_str(), &request.params) {
-                        Ok(value) => {
-                            Ok(Message::Response(Response {
-                                id: request.id,
-                                result: Ok(value),
-                            }))
-                        }
-                        Err(value) => {
-                            Ok(Message::Response(Response {
-                                id: request.id,
-                                result: Err(value),
-                            }))
-                        }
-                    }
+                    Ok(Message::Response(Response {
+                        result: dispatcher.dispatch(request.method.as_str(), &request.params),
+                        id: 0,
+                    }))
                 });
 
                 future.boxed()

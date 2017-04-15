@@ -4,14 +4,14 @@ use rmpv::{self, Value, Integer, Utf8String, decode};
 
 #[derive(PartialEq, Clone, Debug)]
 pub struct Request {
-    pub id: i32,
+    pub id: u32,
     pub method: String,
     pub params: Vec<Value>,
 }
 
 #[derive(PartialEq, Clone, Debug)]
 pub struct Response {
-    pub id: i32,
+    pub id: u32,
     pub result: Result<Value, Value>,
 }
 
@@ -45,8 +45,8 @@ impl Message {
         }
 
         let id = if let Value::Integer(id) = array[1] {
-            id.as_i64()
-                .and_then(|id| Some(id as i32))
+            id.as_u64()
+                .and_then(|id| Some(id as u32))
                 .ok_or(DecodeError::Invalid)?
         } else {
             return Err(DecodeError::Invalid);
