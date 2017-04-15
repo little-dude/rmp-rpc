@@ -92,11 +92,13 @@ fn decode() {
     });
 
     // A single message, nothing is left
-    assert_eq!(try_decode(&msg.pack(), b"").unwrap(), Some((1234, msg.clone())));
+    assert_eq!(try_decode(&msg.pack(), b"").unwrap(),
+               Some((1234, msg.clone())));
 
     // The first message is decoded, the second stays in the buffer
     let mut bytes = [&msg.pack()[..], &msg.pack()[..]].concat();
-    assert_eq!(try_decode(&bytes, &msg.pack()).unwrap(), Some((1234, msg.clone())));
+    assert_eq!(try_decode(&bytes, &msg.pack()).unwrap(),
+               Some((1234, msg.clone())));
 
     // An incomplete message: nothing gets out and everything stays
     let packed_msg = msg.pack();
