@@ -5,43 +5,66 @@ use tokio_proto::TcpServer;
 use rmp_rpc::{Server, Protocol, Dispatch};
 use rmp_rpc::msgpack::{Value, Utf8String, Integer};
 
+fn argument_error() -> Value {
+    Value::String(Utf8String::from("Invalid arguments"))
+}
+
+
 #[derive(Clone)]
-pub struct Calculator;
+pub struct Calculator {
+    value: i64,
+}
 
 impl Calculator {
-    fn add(a: u64, b: u64) -> u64 {
-        a + b
+    fn new() -> Self {
+        Calculator { value: 0 }
+    }
+    fn parse_args(params: &[Value]) -> Result<Vec<i64>, Value> {
+        let mut ret = vec![];
+        for value in params {
+            let int = if let Value::Integer(int) = *value {
+                int.as_i64().ok_or(argument_error())?
+            } else {
+                return Err(argument_error());
+            };
+            ret.push(int);
+        }
+       Ok(ret)
+    }
+
+    fn clear(&mut self) -> Result<Value, Value> {
+        self.value = 0;
+        self.res()
+    }
+
+    fn res(&self) -> Result<Value, Value> {
+        Ok(Value::Integer(Integer::from(self.value)))
+    }
+
+    fn add(&mut self, params: &[Value]) -> Result<Value, Value> {
+        self.value += Self::parse_args(params)?
+            .iter()
+            .fold(0, |acc, &int| acc + int);
+        self.res()
+    }
+
+    fn sub(&mut self, params: &[Value]) -> Result<Value, Value> {
+        self.value -= Self::parse_args(params)?
+            .iter()
+            .fold(0, |acc, &int| acc - int);
+        self.res()
     }
 }
 
-fn err(msg: &str) -> Value {
-    Value::String(Utf8String::from(msg))
-}
-
 impl Dispatch for Calculator {
-    fn dispatch(&self, method: &str, params: &[Value]) -> Result<Value, Value> {
+    fn dispatch(&mut self, method: &str, params: &[Value]) -> Result<Value, Value> {
         match method {
-            "add" => {
-                if params.len() != 2 {
-                    return Err(err("Invalid arguments for `add`"));
-                }
-
-                let a = if let Value::Integer(a) = params[0] {
-                    a.as_u64().ok_or(err("Invalid arguments for `add`"))?
-                } else {
-                    return Err(err("Invalid arguments for `add`"));
-                };
-
-                let b = if let Value::Integer(b) = params[1] {
-                    b.as_u64().ok_or(err("Invalid arguments for `add`"))?
-                } else {
-                    return Err(err("Invalid arguments for `add`"));
-                };
-
-                Ok(Value::Integer(Integer::from(Self::add(a, b))))
-            }
+            "add" | "+" => { self.add(params) },
+            "sub" | "-" => { self.sub(params) },
+            "res" | "=" => { self.res() },
+            "clear" => { self.clear() },
             _ => {
-                Err(err(&format!("Invalid method {}", method)))
+                Err(Value::String(Utf8String::from(format!("Invalid method {}", method))))
             }
         }
     }
@@ -50,5 +73,5 @@ impl Dispatch for Calculator {
 fn main() {
     let addr = "127.0.0.1:54321".parse().unwrap();
     let tcp_server = TcpServer::new(Protocol, addr);
-    tcp_server.serve(|| { Ok(Server::new(Calculator)) });
+    tcp_server.serve(|| { Ok(Server::new(Calculator::new())) });
 }
