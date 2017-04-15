@@ -77,7 +77,7 @@ impl Encoder for Codec {
 #[test]
 fn decode() {
     use message::Request;
-    fn try_decode(input: &[u8], rest: &[u8]) -> io::Result<Option<Message>> {
+    fn try_decode(input: &[u8], rest: &[u8]) -> io::Result<Option<(RequestId, Message)>> {
         let mut codec = Codec {};
         let mut buf = BytesMut::from(input);
         let result = codec.decode(&mut buf);
@@ -92,11 +92,11 @@ fn decode() {
     });
 
     // A single message, nothing is left
-    assert_eq!(try_decode(&msg.pack(), b"").unwrap(), Some(msg.clone()));
+    assert_eq!(try_decode(&msg.pack(), b"").unwrap(), Some((1234, msg.clone())));
 
     // The first message is decoded, the second stays in the buffer
     let mut bytes = [&msg.pack()[..], &msg.pack()[..]].concat();
-    assert_eq!(try_decode(&bytes, &msg.pack()).unwrap(), Some(msg.clone()));
+    assert_eq!(try_decode(&bytes, &msg.pack()).unwrap(), Some((1234, msg.clone())));
 
     // An incomplete message: nothing gets out and everything stays
     let packed_msg = msg.pack();
@@ -105,5 +105,5 @@ fn decode() {
 
     // An invalid message: it gets eaten, and the next message get read.
     bytes = [&vec![0, 1, 2], &msg.pack()[..]].concat();
-    assert_eq!(try_decode(&bytes, b"").unwrap(), Some(msg.clone()));
+    assert_eq!(try_decode(&bytes, b"").unwrap(), Some((1234, msg.clone())));
 }

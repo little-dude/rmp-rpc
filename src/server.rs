@@ -20,7 +20,12 @@ use std::marker::Sync;
 /// `world` (that return "world").  Calling any other method would result in an error.
 ///
 /// ```
+/// extern crate rmpv;
+/// extern crate rmp_rpc;
+///
+/// use rmpv::{Value, Utf8String};
 /// use rmp_rpc::Dispatch;
+///
 /// #[derive(Clone)]
 /// pub struct HelloWorld;
 ///
@@ -33,6 +38,8 @@ use std::marker::Sync;
 ///         }
 ///     }
 /// }
+///
+/// # fn main() {}
 ///
 /// ```
 ///

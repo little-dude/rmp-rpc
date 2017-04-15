@@ -1,4 +1,3 @@
-// use tokio_proto::pipeline::{ServerProto, ClientProto};
 use tokio_proto::multiplex::{ClientProto, ServerProto};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_io::codec::Framed;
@@ -13,7 +12,10 @@ use std::io;
 /// # Examples
 ///
 /// ```
+/// extern crate rmp_rpc;
+/// extern crate tokio_proto;
 /// use tokio_proto::TcpServer;
+/// use rmp_rpc::Protocol;
 /// fn main() {
 ///     let addr = "127.0.0.1:54321".parse().unwrap();
 ///     let tcp_server = TcpServer::new(Protocol, addr);
