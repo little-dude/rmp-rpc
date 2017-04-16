@@ -31,4 +31,4 @@ pub mod msgpack {
 
 pub use server::{Server, Dispatch};
 pub use protocol::Protocol;
-pub use client::Client;
+pub use client::{Client, Response};
