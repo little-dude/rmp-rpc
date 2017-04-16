@@ -7,7 +7,6 @@ use std::net::SocketAddr;
 use tokio_proto::TcpServer;
 use rmp_rpc::{Server, Protocol, Dispatch};
 use rmp_rpc::msgpack::{Value, Utf8String, Integer};
-use rmp_rpc::Client as TcpClient;
 use std::thread;
 use futures::Future;
 use tokio_core::reactor::{Handle, Core};
@@ -114,11 +113,11 @@ fn parse_response(value: Result<Value, Value>) ->  Result<Result<i64, String>, i
 
 pub type Response = Box<Future<Item=Result<i64, String>, Error=io::Error>>;
 
-struct Client(TcpClient);
+struct Client(rmp_rpc::Client);
 
 impl Client {
     fn new(addr: &SocketAddr, handle: &Handle) -> Self {
-        Client(TcpClient::connect(addr, handle).wait().unwrap())
+        Client(rmp_rpc::Client::connect(addr, handle).wait().unwrap())
     }
 
     fn add(&self, values: &[i64]) -> Response {
@@ -129,15 +128,24 @@ impl Client {
     }
 
     fn sub(&self, values: &[i64]) -> Response {
-        unimplemented!()
+        let res = self.0
+            .call("sub", values.iter().map(|v| Value::Integer(Integer::from(*v))).collect())
+            .and_then(|response| parse_response(response));
+        Box::new(res)
     }
 
     fn res(&self) -> Response {
-        unimplemented!()
+        let res = self.0
+            .call("res", vec![])
+            .and_then(|response| parse_response(response));
+        Box::new(res)
     }
 
     fn clear(&self) -> Response {
-        unimplemented!()
+        let res = self.0
+            .call("clear", vec![])
+            .and_then(|response| parse_response(response));
+        Box::new(res)
     }
 }
 
@@ -155,9 +163,12 @@ fn main() {
 
     thread::sleep(Duration::from_millis(100));
 
-    let mut core = Core::new().unwrap();
+    let core = Core::new().unwrap();
     let handle = core.handle();
 
     let client = Client::new(&addr, &handle);
     println!("{:?}", client.add(&vec![1,2,3]).wait());
+    println!("{:?}", client.sub(&vec![1]).wait());
+    println!("{:?}", client.res().wait());
+    println!("{:?}", client.clear().wait());
 }
