@@ -1,9 +1,18 @@
+extern crate tokio_core;
+extern crate futures;
 extern crate tokio_proto;
 extern crate rmp_rpc;
 
+use std::net::SocketAddr;
 use tokio_proto::TcpServer;
 use rmp_rpc::{Server, Protocol, Dispatch};
 use rmp_rpc::msgpack::{Value, Utf8String, Integer};
+use rmp_rpc::Client as TcpClient;
+use std::thread;
+use futures::Future;
+use tokio_core::reactor::{Handle, Core};
+use std::io;
+use std::time::Duration;
 
 fn argument_error() -> Value {
     Value::String(Utf8String::from("Invalid arguments"))
@@ -70,8 +79,85 @@ impl Dispatch for Calculator {
     }
 }
 
+fn parse_response(value: Result<Value, Value>) ->  Result<Result<i64, String>, io::Error> {
+    match value {
+        Ok(res) => {
+            if let Value::Integer(int) = res {
+                match int.as_i64() {
+                    Some(int) => {
+                        return Ok(Ok(int));
+                    }
+                    None => {
+                        return Ok(Err(format!("Could not parse server response as an integer")));
+                    }
+                }
+            } else {
+                Ok(Err(format!("Could not parse server response as an integer")))
+            }
+        }
+        Err(err) => {
+            if let Value::String(s) = err {
+                match s.as_str() {
+                    Some(err_str) => {
+                        return Ok(Err(err_str.to_string()));
+                    }
+                    None => {
+                        return Ok(Err(format!("Could not parse server response as a string")));
+                    }
+                }
+            } else {
+                Ok(Err(format!("Could not parse server response as a string")))
+            }
+        }
+    }
+}
+
+pub type Response = Box<Future<Item=Result<i64, String>, Error=io::Error>>;
+
+struct Client(TcpClient);
+
+impl Client {
+    fn new(addr: &SocketAddr, handle: &Handle) -> Self {
+        Client(TcpClient::connect(addr, handle).wait().unwrap())
+    }
+
+    fn add(&self, values: &[i64]) -> Response {
+        let res = self.0
+            .call("add", values.iter().map(|v| Value::Integer(Integer::from(*v))).collect())
+            .and_then(|response| parse_response(response));
+        Box::new(res)
+    }
+
+    fn sub(&self, values: &[i64]) -> Response {
+        unimplemented!()
+    }
+
+    fn res(&self) -> Response {
+        unimplemented!()
+    }
+
+    fn clear(&self) -> Response {
+        unimplemented!()
+    }
+}
+
+
 fn main() {
-    let addr = "127.0.0.1:54321".parse().unwrap();
-    let tcp_server = TcpServer::new(Protocol, addr);
-    tcp_server.serve(|| { Ok(Server::new(Calculator::new())) });
+
+    let addr = "127.0.0.1:12345".parse().unwrap();
+
+    thread::spawn(move || {
+        let tcp_server = TcpServer::new(Protocol, addr);
+        tcp_server.serve(|| {
+            Ok(Server::new(Calculator::new()))
+        });
+    });
+
+    thread::sleep(Duration::from_millis(100));
+
+    let mut core = Core::new().unwrap();
+    let handle = core.handle();
+
+    let client = Client::new(&addr, &handle);
+    println!("{:?}", client.add(&vec![1,2,3]).wait());
 }
