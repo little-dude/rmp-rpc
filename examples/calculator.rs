@@ -242,26 +242,26 @@ fn main() {
 
     thread::sleep(Duration::from_millis(100));
 
-    let mut client = Client::new(&addr);
-    client.connect().unwrap();
+    // let mut client = Client::new(&addr);
+    // client.connect().unwrap();
 
-    // FIXME: this just hangs, I don't understand why.
-    // It seems that the request is not sent
-    println!("{:?}", client.add(&vec![1,2,3]).wait());
-    println!("{:?}", client.sub(&vec![1]).wait());
-    println!("{:?}", client.res().wait());
-    println!("{:?}", client.clear().wait());
+    // // FIXME: this just hangs, I don't understand why.
+    // // It seems that the request is not sent
+    // println!("{:?}", client.add(&vec![1,2,3]).wait());
+    // println!("{:?}", client.sub(&vec![1]).wait());
+    // println!("{:?}", client.res().wait());
+    // println!("{:?}", client.clear().wait());
 
     // This, on the other hand, works.
     //
-    // use tokio_core::reactor::Core;
-    // let mut core = Core::new().unwrap();
-    // let handle = core.handle();
-    // core.run(
-    //     rmp_rpc::Client::connect(&addr, &handle).and_then(|client| {
-    //         client.request("res", vec![]).and_then(move |response| {
-    //             println!("client: {:?}", response);
-    //             Ok(())
-    //         })
-    //     })).unwrap();
+    use tokio_core::reactor::Core;
+    let mut core = Core::new().unwrap();
+    let handle = core.handle();
+    core.run(
+        rmp_rpc::Client::connect(&addr, &handle).and_then(|client| {
+            client.request("res", vec![]).and_then(move |response| {
+                println!("client: {:?}", response);
+                Ok(())
+            })
+        })).unwrap();
 }
