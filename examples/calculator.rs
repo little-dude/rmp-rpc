@@ -242,26 +242,44 @@ fn main() {
 
     thread::sleep(Duration::from_millis(100));
 
-    // let mut client = Client::new(&addr);
-    // client.connect().unwrap();
+    let mut client = Client::new(&addr);
+    client.connect().unwrap();
 
-    // // FIXME: this just hangs, I don't understand why.
-    // // It seems that the request is not sent
-    // println!("{:?}", client.add(&vec![1,2,3]).wait());
-    // println!("{:?}", client.sub(&vec![1]).wait());
-    // println!("{:?}", client.res().wait());
-    // println!("{:?}", client.clear().wait());
-
-    // This, on the other hand, works.
-    //
-    use tokio_core::reactor::Core;
-    let mut core = Core::new().unwrap();
-    let handle = core.handle();
-    core.run(
-        rmp_rpc::Client::connect(&addr, &handle).and_then(|client| {
-            client.request("res", vec![]).and_then(move |response| {
-                println!("client: {:?}", response);
-                Ok(())
-            })
-        })).unwrap();
+    // FIXME: this just hangs, I don't understand why.
+    // It seems that the request is not sent
+    println!("{:?}", client.add(&vec![1,2,3]).wait());
+    println!("{:?}", client.sub(&vec![1]).wait());
+    println!("{:?}", client.res().wait());
+    println!("{:?}", client.clear().wait());
 }
+
+// fn main() {
+//     use server::Calculator;
+//     use tokio_proto::TcpServer;
+//     use rmp_rpc::{Protocol, Server, Client};
+//     use futures::Future;
+//     use std::thread;
+//     use std::time::Duration;
+//     use tokio_core::reactor::Core;
+// 
+//     let addr = "127.0.0.1:54321".parse().unwrap();
+// 
+//     thread::spawn(move || {
+//         let tcp_server = TcpServer::new(Protocol, addr);
+//         tcp_server.serve(|| {
+//             Ok(Server::new(Calculator::new()))
+//         });
+//     });
+// 
+//     thread::sleep(Duration::from_millis(100));
+// 
+//     let mut core = Core::new().unwrap();
+//     let handle = core.handle();
+//     core.run(
+//         Client::connect(&addr, &handle).and_then(|client| {
+//             client.request("res", vec![]).and_then(move |response| {
+//                 println!("client: {:?}", response);
+//                 Ok(())
+//             })
+//         })).unwrap();
+// }

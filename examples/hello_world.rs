@@ -6,13 +6,13 @@ extern crate rmp_rpc;
 
 use tokio_proto::TcpServer;
 use rmp_rpc::{Server, Protocol, Dispatch, Client};
-use rmp_rpc::msgpack::{Value, Utf8String, Integer};
+use rmp_rpc::msgpack::{Value, Utf8String};
 use tokio_core::reactor::Core;
 use std::thread;
 use std::time::Duration;
+use futures::Future;
 
 
-// A simple dispatcher that know only two methods, "hello" and "world"
 #[derive(Clone)]
 pub struct HelloWorld;
 
@@ -41,17 +41,17 @@ fn main() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
-    let boxed_future: Box<futures::future::Future<Error=std::io::Error, Item=rmp_rpc::Client>> = Client::connect(&addr, &handle);
     core.run(
-        // Why does this fail? according to rustc:
-        //
-        // > the trait `std::marker::Sized` is not implemented for `futures::Future<Error=std::io::Error, Item=rmp_rpc::Client>`
-        //
-        // but... it's a Box, not a Future, so it does implement Sized.
-        boxed_future.and_then(|client| {
-            client.request("hello", vec![]).and_then(|response| {
-                println!("client: {:?}", response);
-                Ok(())
-            })
-        })).unwrap();
+        Client::connect(&addr, &handle)
+            .and_then(|client| {
+                client.request("hello", vec![])
+                    .and_then(move |response| {
+                        println!("client: {:?}", response);
+                        client.request("world", vec![])
+                    })
+                    .and_then(|response| {
+                        println!("client: {:?}", response);
+                        Ok(())
+                    })
+            })).unwrap();
 }
