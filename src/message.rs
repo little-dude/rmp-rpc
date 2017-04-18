@@ -36,9 +36,36 @@ impl Message {
     fn decode_notification(_array: &[Value]) -> Result<Notification, DecodeError> {
         unimplemented!();
     }
-    fn decode_response(_array: &[Value]) -> Result<Response, DecodeError> {
-        unimplemented!();
+
+    fn decode_response(array: &[Value]) -> Result<Response, DecodeError> {
+        if array.len() < 2 {
+            return Err(DecodeError::Invalid);
+        }
+
+        let id = if let Value::Integer(id) = array[1] {
+            id.as_u64()
+                .and_then(|id| Some(id as u32))
+                .ok_or(DecodeError::Invalid)?
+        } else {
+            return Err(DecodeError::Invalid);
+        };
+
+        match array[2] {
+            Value::Nil => {
+                Ok(Response {
+                    id: id,
+                    result: Ok(array[3].clone()),
+                })
+            }
+            ref error => {
+                Ok(Response {
+                    id: id,
+                    result: Err(error.clone()),
+                })
+            }
+        }
     }
+
     fn decode_request(array: &[Value]) -> Result<Request, DecodeError> {
         if array.len() < 4 {
             return Err(DecodeError::Invalid);
