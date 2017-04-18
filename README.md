@@ -1,10 +1,19 @@
 rmp-rpc
 =======
 
-A Rust implementation of MessagePack-RPC inspired by [`msgpack-rpc-rust`](https://github.com/euclio/msgpack-rpc-rust), but based on [tokio](http://tokio.rs/)
+A Rust implementation of MessagePack-RPC inspired by
+[`msgpack-rpc-rust`](https://github.com/euclio/msgpack-rpc-rust), but based on
+[tokio](http://tokio.rs/).
+
+[Documentation](https://docs.rs/rmp-rpc/0.0.2/rmp_rpc/index.html).
+
 
 Example
 -------
+
+Here is a minimalistic example showing how to write a simple server and client.
+For a more advanced example you can take a look at the
+[calculator example](examples/calculator).
 
 ```rust
 extern crate futures;
@@ -39,6 +48,7 @@ impl Dispatch for HelloWorld {
 fn main() {
     let addr = "127.0.0.1:54321".parse().unwrap();
 
+    // start the server in the background
     thread::spawn(move || {
         let tcp_server = TcpServer::new(Protocol, addr);
         tcp_server.serve(|| {
@@ -48,9 +58,10 @@ fn main() {
 
     thread::sleep(Duration::from_millis(100));
 
+    // client part
+
     let mut core = Core::new().unwrap();
     let handle = core.handle();
-
     core.run(
         Client::connect(&addr, &handle)
             .and_then(|client| {

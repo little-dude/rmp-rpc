@@ -1,3 +1,57 @@
+//! Building blocks for building msgpack-rpc servers.
+//!
+//! A server basically only needs to implement the `Dispatch` trait.
+//!
+//! # Examples
+//!
+//! Here is how to implement a simple server with two methods `hello` (that returns "hello") and
+//! `world` (that return "world").  Calling any other method would result in an error.
+//!
+//! ```
+//! extern crate rmp_rpc;
+//!
+//! use rmp_rpc::msgpack::{Value, Utf8String};
+//! use rmp_rpc::server::Dispatch;
+//!
+//! #[derive(Clone)]
+//! pub struct HelloWorld;
+//!
+//! impl Dispatch for HelloWorld {
+//!     fn dispatch(&mut self, method: &str, _params: &[Value]) -> Result<Value, Value> {
+//!         match method {
+//!             "hello" => { Ok(Value::String(Utf8String::from("hello"))) }
+//!             "world" => { Ok(Value::String(Utf8String::from("world"))) }
+//!             _ => { Err(Value::String(Utf8String::from(format!("Invalid method {}", method)))) }
+//!         }
+//!     }
+//! }
+//!
+//! # fn main() {}
+//!
+//! ```
+//!
+//!
+//! Then, a little bit of boilerplate is necessary to actually run the server.
+//!
+//! ```
+//! extern crate tokio_proto;
+//!
+//! use tokio_proto::TcpServer;
+//! use rmp_rpc::server::Server;
+//! use rmp_rpc::protocol::Protocol;
+//!
+//! fn main() {
+//!     // create a TCP server that understands the msgpack-rpc protocol
+//!     let tcp_server = TcpServer::new(Protocol, "127.0.0.1:54321");
+//!
+//!     // start serving
+//!     tcp_server.serve(|| {
+//!         // spawn a new dispatcher instance for each new connection.
+//!         Ok(Server::new(HelloWorld))
+//!     });
+//! }
+//! ```
+//!
 use std::io;
 use tokio_service::Service;
 use futures::{Future, BoxFuture};
@@ -13,36 +67,7 @@ use std::marker::Sync;
 //
 // Is this even fixable?
 /// A dispatcher that performs the calls on the server.
-///
-/// # Examples
-///
-/// Here is how to implement a simple server with two methods `hello` (that returns "hello") and
-/// `world` (that return "world").  Calling any other method would result in an error.
-///
-/// ```
-/// extern crate rmpv;
-/// extern crate rmp_rpc;
-///
-/// use rmpv::{Value, Utf8String};
-/// use rmp_rpc::Dispatch;
-///
-/// #[derive(Clone)]
-/// pub struct HelloWorld;
-///
-/// impl Dispatch for HelloWorld {
-///     fn dispatch(&mut self, method: &str, _params: &[Value]) -> Result<Value, Value> {
-///         match method {
-///             "hello" => { Ok(Value::String(Utf8String::from("hello"))) }
-///             "world" => { Ok(Value::String(Utf8String::from("world"))) }
-///             _ => { Err(Value::String(Utf8String::from(format!("Invalid method {}", method)))) }
-///         }
-///     }
-/// }
-///
-/// # fn main() {}
-///
-/// ```
-///
+/// See the module documentation for an example.
 pub trait Dispatch: Send + Sync + Clone + 'static {
     /// Respond a request. `method` is the name of the `MessagePack-RPC` method that was called, and
     /// `params` its arguments.

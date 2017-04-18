@@ -2,6 +2,8 @@ use errors::*;
 use std::io::{self, Read, Write};
 use rmpv::{self, Value, Integer, Utf8String, decode};
 
+/// Represent a msgpack-rpc
+/// [request message](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#request-message)
 #[derive(PartialEq, Clone, Debug)]
 pub struct Request {
     pub id: u32,
@@ -9,18 +11,24 @@ pub struct Request {
     pub params: Vec<Value>,
 }
 
+/// Represent a msgpack-rpc
+/// [response message](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#response-message)
 #[derive(PartialEq, Clone, Debug)]
 pub struct Response {
     pub id: u32,
     pub result: Result<Value, Value>,
 }
 
+/// Represent a msgpack-rpc
+/// [notification message](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#notification-message)
 #[derive(PartialEq, Clone, Debug)]
 pub struct Notification {
     pub method: String,
     pub params: Vec<Value>,
 }
 
+/// Represent a msgpack-rpc message as described in the
+/// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification)
 #[derive(PartialEq, Clone, Debug)]
 pub enum Message {
     Request(Request),

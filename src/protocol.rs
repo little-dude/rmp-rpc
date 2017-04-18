@@ -6,8 +6,8 @@ use codec::Codec;
 use std::io;
 
 /// The `MessagePack-RPC` transport protocol.
-/// See [the `tokio_proto`
-/// documentation](https://tokio-rs.github.io/tokio-proto/tokio_proto/index.html)
+/// See
+/// [the `tokio_proto` documentation](https://tokio-rs.github.io/tokio-proto/tokio_proto/index.html)
 ///
 /// # Examples
 ///

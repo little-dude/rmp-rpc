@@ -13,11 +13,15 @@ use protocol::Protocol;
 use rmpv::Value;
 
 
+/// Represent a TCP msgpack-rpc client.
 pub struct Client(ClientService<TcpStream, Protocol>);
 
+/// A future corresponding to a server response.
 pub type Response = Box<Future<Item = Result<Value, Value>, Error = io::Error>>;
 
 impl Client {
+    /// Connect to a remote server.
+    /// The client returned can be used to perform requests.
     pub fn connect(addr: &SocketAddr,
                    handle: &Handle)
                    -> Box<Future<Item = Client, Error = io::Error>> {
@@ -27,6 +31,7 @@ impl Client {
         Box::new(ret)
     }
 
+    /// Perform a msgpack-rpc request.
     pub fn request(&self, method: &str, params: Vec<Value>) -> Response {
         let req = Message::Request(Request {
             // we can set this to 0 because under the hood it's handle by tokio at the

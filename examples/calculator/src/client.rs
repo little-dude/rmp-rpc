@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use rmp_rpc;
+use rmp_rpc::client;
 use rmp_rpc::msgpack::{Value, Integer};
 use futures::Future;
 use tokio_core::reactor::Core;
@@ -9,7 +9,7 @@ use futures::sync::oneshot;
 pub fn connect(addr: &SocketAddr) -> Result<Client, io::Error> {
     let mut reactor = Core::new()?;
     let handle = reactor.handle();
-    let inner_client = reactor.run(rmp_rpc::Client::connect(addr, &handle))?;
+    let inner_client = reactor.run(client::Client::connect(addr, &handle))?;
     let client = Client {
         client: inner_client,
         reactor: reactor,
@@ -20,7 +20,7 @@ pub fn connect(addr: &SocketAddr) -> Result<Client, io::Error> {
 pub type Response = oneshot::Receiver<Result<i64, RpcError>>;
 
 pub struct Client {
-    client: rmp_rpc::Client,
+    client: client::Client,
     reactor: Core,
 }
 

@@ -1,4 +1,4 @@
-use rmp_rpc::Dispatch;
+use rmp_rpc::server::Dispatch;
 use rmp_rpc::msgpack::{Value, Utf8String, Integer};
 
 fn argument_error() -> Value {

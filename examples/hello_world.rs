@@ -5,7 +5,9 @@ extern crate rmp_rpc;
 
 
 use tokio_proto::TcpServer;
-use rmp_rpc::{Server, Protocol, Dispatch, Client};
+use rmp_rpc::server::{Server, Dispatch};
+use rmp_rpc::client::Client;
+use rmp_rpc::protocol::Protocol;
 use rmp_rpc::msgpack::{Value, Utf8String};
 use tokio_core::reactor::Core;
 use std::thread;

@@ -18,17 +18,18 @@ extern crate tokio_proto;
 extern crate tokio_service;
 
 mod errors;
-mod message;
 mod codec;
-mod protocol;
-mod server;
-mod client;
+
+/// Representation of the msgpack-rpc messages.
+pub mod message;
+/// Implementation of the msgpack-rpc protocol, for both clients and servers.
+pub mod protocol;
+/// msgpack-rpc servers building blocks.
+pub mod server;
+/// msgpack-rpc clients building blocks.
+pub mod client;
 
 /// Re-exports from [rmpv](https://docs.rs/rmpv)
 pub mod msgpack {
     pub use rmpv::{Value, Integer, Utf8String};
 }
-
-pub use server::{Server, Dispatch};
-pub use protocol::Protocol;
-pub use client::{Client, Response};
