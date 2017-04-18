@@ -1,0 +1,12 @@
+[package]
+name = "calculator-example"
+version = "0.0.1"
+authors = ["Corentin Henry <corentinhenry@gmail.com>"]
+description = "a simple calculator msgpack-rpc server and client"
+
+[dependencies]
+rmp-rpc = { path = "../.." }
+futures = "^0.1.13"
+tokio-core = "^0.1.6"
+tokio-proto = "^0.1.1"
+clippy = {version = ">=0.0, <0.1", optional = true}
