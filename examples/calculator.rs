@@ -231,7 +231,7 @@ fn main() {
     use std::thread;
     use std::time::Duration;
 
-    let addr = "127.0.0.1:12345".parse().unwrap();
+    let addr = "127.0.0.1:54321".parse().unwrap();
 
     thread::spawn(move || {
         let tcp_server = TcpServer::new(Protocol, addr);
@@ -254,12 +254,13 @@ fn main() {
 
     // This, on the other hand, works.
     //
+    // use tokio_core::reactor::Core;
     // let mut core = Core::new().unwrap();
     // let handle = core.handle();
     // core.run(
     //     rmp_rpc::Client::connect(&addr, &handle).and_then(|client| {
     //         client.request("res", vec![]).and_then(move |response| {
-    //             println!("CLIENT: {:?}", response);
+    //             println!("client: {:?}", response);
     //             Ok(())
     //         })
     //     })).unwrap();
