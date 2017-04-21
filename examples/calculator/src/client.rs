@@ -2,29 +2,22 @@ use std::net::SocketAddr;
 use rmp_rpc::client;
 use rmp_rpc::msgpack::{Value, Integer};
 use futures::Future;
-use tokio_core::reactor::Core;
+use tokio_core::reactor::Handle;
 use std::{fmt, io, error};
-use futures::sync::oneshot;
 
-pub fn connect(addr: &SocketAddr) -> Result<Client, io::Error> {
-    let mut reactor = Core::new()?;
-    let handle = reactor.handle();
-    let inner_client = reactor.run(client::Client::connect(addr, &handle))?;
-    let client = Client {
-        client: inner_client,
-        reactor: reactor,
-    };
-    Ok(client)
-}
+pub type Response = Box<Future<Item = i64, Error = RpcError>>;
 
-pub type Response = oneshot::Receiver<Result<i64, RpcError>>;
-
-pub struct Client {
-    client: client::Client,
-    reactor: Core,
-}
+pub struct Client(client::Client);
 
 impl Client {
+    pub fn connect(addr: &SocketAddr,
+                   handle: &Handle)
+                   -> Box<Future<Item = Self, Error = RpcError>> {
+        let client =
+            client::Client::connect(addr, handle).map(Client).map_err(|err| From::from(err));
+        Box::new(client)
+    }
+
     pub fn add(&self, values: &[i64]) -> Response {
         let params = values.iter().map(|v| Value::Integer(Integer::from(*v))).collect();
         self.call("add", params)
@@ -44,12 +37,7 @@ impl Client {
     }
 
     fn call(&self, method: &str, params: Vec<Value>) -> Response {
-        let handle = self.reactor.handle();
-        let (tx, rx) = oneshot::channel();
-        handle.spawn(self.client
-            .request(method, params)
-            .then(|response| Ok(tx.send(parse_response(response)).unwrap())));
-        rx
+        Box::new(self.0.request(method, params).then(|response| parse_response(response)))
     }
 }
 

@@ -1,6 +1,7 @@
 use errors::*;
 use std::io::{self, Read, Write};
 use rmpv::{self, Value, Integer, Utf8String, decode};
+use std::convert::From;
 
 /// Represent a msgpack-rpc
 /// [request message](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#request-message)
@@ -236,4 +237,22 @@ fn test_decode_request() {
     //         },
     //     });
     // }
+}
+
+impl From<Response> for Message {
+    fn from(response: Response) -> Message {
+        Message::Response(response)
+    }
+}
+
+impl From<Request> for Message {
+    fn from(request: Request) -> Message {
+        Message::Request(request)
+    }
+}
+
+impl From<Notification> for Message {
+    fn from(notification: Notification) -> Message {
+        Message::Notification(notification)
+    }
 }

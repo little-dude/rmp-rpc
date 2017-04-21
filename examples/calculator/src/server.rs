@@ -1,5 +1,9 @@
-use rmp_rpc::server::Dispatch;
+use std::sync::{Arc, Mutex};
+use std::io;
+use rmp_rpc::message::{Response, Message};
 use rmp_rpc::msgpack::{Value, Utf8String, Integer};
+use futures::{future, Future};
+use tokio_service::{Service, NewService};
 
 fn argument_error() -> Value {
     Value::String(Utf8String::from("Invalid arguments"))
@@ -8,12 +12,12 @@ fn argument_error() -> Value {
 
 #[derive(Clone)]
 pub struct Calculator {
-    value: i64,
+    value: Arc<Mutex<i64>>,
 }
 
 impl Calculator {
     pub fn new() -> Self {
-        Calculator { value: 0 }
+        Calculator { value: Arc::new(Mutex::new(0)) }
     }
 
     fn parse_args(params: &[Value]) -> Result<Vec<i64>, Value> {
@@ -29,44 +33,69 @@ impl Calculator {
         Ok(ret)
     }
 
-    fn clear(&mut self) -> Result<Value, Value> {
+    fn clear(&self) -> Result<Value, Value> {
         println!("server: clear");
-        self.value = 0;
-        self.res()
+        let mut value = self.value.lock().unwrap();
+        *value = 0;
+        Ok(Value::Integer(Integer::from(*value)))
     }
 
     fn res(&self) -> Result<Value, Value> {
         println!("server: res");
-        Ok(Value::Integer(Integer::from(self.value)))
+        Ok(Value::Integer(Integer::from(*self.value.lock().unwrap())))
     }
 
-    fn add(&mut self, params: &[Value]) -> Result<Value, Value> {
+    fn add(&self, params: &[Value]) -> Result<Value, Value> {
         println!("server: add");
-        self.value += Self::parse_args(params)
-            ?
-            .iter()
-            .fold(0, |acc, &int| acc + int);
-        self.res()
+        let mut value = self.value.lock().unwrap();
+        *value += Self::parse_args(params)?.iter().fold(0, |acc, &int| acc + int);
+        Ok(Value::Integer(Integer::from(*value)))
     }
 
-    fn sub(&mut self, params: &[Value]) -> Result<Value, Value> {
+    fn sub(&self, params: &[Value]) -> Result<Value, Value> {
         println!("server: sub");
-        self.value -= Self::parse_args(params)
-            ?
-            .iter()
-            .fold(0, |acc, &int| acc - int);
-        self.res()
+        let mut value = self.value.lock().unwrap();
+        *value -= Self::parse_args(params)?.iter().fold(0, |acc, &int| acc + int);
+        Ok(Value::Integer(Integer::from(*value)))
     }
 }
 
-impl Dispatch for Calculator {
-    fn dispatch(&mut self, method: &str, params: &[Value]) -> Result<Value, Value> {
-        match method {
-            "add" | "+" => self.add(params),
-            "sub" | "-" => self.sub(params),
-            "res" | "=" => self.res(),
-            "clear" => self.clear(),
-            _ => Err(Value::String(Utf8String::from(format!("Invalid method {}", method)))),
-        }
+impl Service for Calculator {
+    type Request = Message;
+    type Response = Message;
+    type Error = io::Error;
+    type Future = Box<Future<Item = Message, Error = io::Error>>;
+
+    fn call(&self, msg: Message) -> Self::Future {
+        let res = match msg {
+            Message::Request(req) => {
+                match req.method.as_str() {
+                    "add" | "+" => self.add(&req.params),
+                    "sub" | "-" => self.sub(&req.params),
+                    "res" | "=" => self.res(),
+                    "clear" => self.clear(),
+                    method => {
+                        Err(Value::String(Utf8String::from(format!("Invalid method {}", method))))
+                    }
+                }
+            }
+            _ => unimplemented!(),
+        };
+        Box::new(future::ok(Message::Response(Response {
+            result: res,
+            id: 0,
+        })))
+    }
+}
+
+impl NewService for Calculator {
+    type Request = Message;
+    type Response = Message;
+    type Error = io::Error;
+    type Instance = Calculator;
+
+    fn new_service(&self) -> io::Result<Self::Instance> {
+        println!("server: new_service called.");
+        Ok(self.clone())
     }
 }
