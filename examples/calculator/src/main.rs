@@ -18,7 +18,7 @@ fn main() {
 
     let addr = "127.0.0.1:54321".parse().unwrap();
 
-    thread::spawn(move || rmp_rpc::server::serve(addr, Calculator::new()));
+    thread::spawn(move || rmp_rpc::serve(addr, Calculator::new()));
 
     thread::sleep(Duration::from_millis(100));
 

@@ -6,10 +6,7 @@ extern crate rmp_rpc;
 
 
 use tokio_service::{NewService, Service};
-use rmp_rpc::server;
-use rmp_rpc::client::Client;
-use rmp_rpc::message::{Message, Response};
-use rmp_rpc::msgpack::{Value, Utf8String};
+use rmp_rpc::{serve, Client, Message, Value, Utf8String};
 use tokio_core::reactor::Core;
 use std::{io, thread};
 use std::time::Duration;
@@ -40,20 +37,20 @@ impl Service for HelloWorld {
     fn call(&self, msg: Message) -> Self::Future {
         Box::new(
             match msg {
-                Message::Request(req) => {
-                    match req.method.as_str() {
-                        "hello" => future::ok(Message::Response(Response {
+                Message::Request { method, .. } => {
+                    match method.as_str() {
+                        "hello" => future::ok(Message::Response {
                             result: Ok(Value::String(Utf8String::from("hello"))),
                             id: 0
-                        })),
-                        "world" => future::ok(Message::Response(Response {
+                        }),
+                        "world" => future::ok(Message::Response {
                             result: Ok(Value::String(Utf8String::from("world"))),
                             id: 0
-                        })),
-                        method => future::ok(Message::Response(Response {
+                        }),
+                        method => future::ok(Message::Response {
                             result: Err(Value::String(Utf8String::from(format!("unknown method {}", method).as_str()))),
                             id: 0
-                        })),
+                        }),
                     }
                 }
                 _ => unimplemented!()
@@ -66,7 +63,7 @@ fn main() {
     let addr = "127.0.0.1:54321".parse().unwrap();
 
     thread::spawn(move || {
-        server::serve(addr, HelloWorld)
+        serve(addr, HelloWorld)
     });
 
     thread::sleep(Duration::from_millis(100));

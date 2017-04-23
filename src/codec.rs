@@ -19,12 +19,8 @@ impl Decoder for Codec {
                 match Message::decode(&mut buf) {
                     Ok(message) => {
                         res = match message {
-                            Message::Request(msg) => {
-                                Ok(Some((msg.id as RequestId, Message::Request(msg))))
-                            }
-                            Message::Response(msg) => {
-                                Ok(Some((msg.id as RequestId, Message::Response(msg))))
-                            }
+                            Message::Response { id, .. } |
+                            Message::Request { id, .. } => Ok(Some((id as RequestId, message))),
                             _ => Ok(Some((u64::max_value() as RequestId, message))),
                         };
                         break;
@@ -52,6 +48,10 @@ impl Decoder for Codec {
     }
 }
 
+fn id_from_u64(id: u64) -> u32 {
+    (id & u32::max_value() as u64) as u32
+}
+
 impl Encoder for Codec {
     type Item = (RequestId, Message);
     type Error = io::Error;
@@ -59,12 +59,8 @@ impl Encoder for Codec {
     fn encode(&mut self, input: Self::Item, buf: &mut BytesMut) -> io::Result<()> {
         let mut input = input;
         match input.1 {
-            Message::Request(ref mut message) => {
-                message.id = (input.0 & u32::max_value() as u64) as u32;
-            }
-            Message::Response(ref mut message) => {
-                message.id = (input.0 & u32::max_value() as u64) as u32;
-            }
+            Message::Request { ref mut id, .. } |
+            Message::Response { ref mut id, .. } => *id = id_from_u64(input.0),
             _ => {}
         }
         let data = input.1.pack();
@@ -76,7 +72,7 @@ impl Encoder for Codec {
 
 #[test]
 fn decode() {
-    use message::Request;
+    use message::Message;
     fn try_decode(input: &[u8], rest: &[u8]) -> io::Result<Option<(RequestId, Message)>> {
         let mut codec = Codec {};
         let mut buf = BytesMut::from(input);
@@ -85,11 +81,11 @@ fn decode() {
         result
     }
 
-    let msg = Message::Request(Request {
+    let msg = Message::Request {
         id: 1234,
         method: "dummy".to_string(),
         params: Vec::new(),
-    });
+    };
 
     // A single message, nothing is left
     assert_eq!(try_decode(&msg.pack(), b"").unwrap(),

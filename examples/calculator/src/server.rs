@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 use std::io;
-use rmp_rpc::message::{Response, Message};
-use rmp_rpc::msgpack::{Value, Utf8String, Integer};
+use rmp_rpc::{Message, Value, Utf8String, Integer};
 use futures::{future, Future};
 use tokio_service::{Service, NewService};
 
@@ -68,10 +67,10 @@ impl Service for Calculator {
 
     fn call(&self, msg: Message) -> Self::Future {
         let res = match msg {
-            Message::Request(req) => {
-                match req.method.as_str() {
-                    "add" | "+" => self.add(&req.params),
-                    "sub" | "-" => self.sub(&req.params),
+            Message::Request { method, params, .. } => {
+                match method.as_str() {
+                    "add" | "+" => self.add(&params),
+                    "sub" | "-" => self.sub(&params),
                     "res" | "=" => self.res(),
                     "clear" => self.clear(),
                     method => {
@@ -81,10 +80,10 @@ impl Service for Calculator {
             }
             _ => unimplemented!(),
         };
-        Box::new(future::ok(Message::Response(Response {
+        Box::new(future::ok(Message::Response {
             result: res,
             id: 0,
-        })))
+        }))
     }
 }
 
