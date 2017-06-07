@@ -74,6 +74,7 @@ fn main() {
     core.run(
         Client::connect(&addr, &handle)
             .and_then(|client| {
+                println!("Client connected");
                 client.request("hello", vec![])
                     .and_then(move |response| {
                         println!("client: {:?}", response);

@@ -3,7 +3,7 @@ use futures::Future;
 use tokio_core::net::TcpStream;
 use tokio_core::reactor::Handle;
 use tokio_proto::TcpClient;
-use tokio_proto::multiplex::ClientService;
+use tokio_proto::pipeline::ClientService;
 use tokio_service::Service;
 
 use std::io;

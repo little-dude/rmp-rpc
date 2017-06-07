@@ -5,7 +5,8 @@ use std::net::SocketAddr;
 use tokio_proto::TcpServer;
 use futures::Future;
 use message::Message;
-use protocol::Protocol;
+ // use protocol::Protocol;
+use protocol::{ServerProto};
 
 struct MsgpackRpc<T> {
     inner: T,
@@ -76,7 +77,7 @@ pub fn serve<T>(addr: SocketAddr, new_service: T)
     where T: NewService<Request = Message, Response = Message, Error = io::Error> + Send + Sync + 'static,
 {
     let new_service = MsgpackRpc { inner: new_service };
-    TcpServer::new(Protocol, addr).serve(new_service);
+    TcpServer::new(ServerProto {}, addr).serve(new_service);
 }
 
 impl<T> Service for MsgpackRpc<T>
@@ -89,6 +90,7 @@ impl<T> Service for MsgpackRpc<T>
     type Future = Box<Future<Item = Message, Error = io::Error>>;
 
     fn call(&self, req: Message) -> Self::Future {
+        println!("call");
         Box::new(self.inner.call(req))
     }
 }

@@ -1,14 +1,13 @@
 use std::io;
 use bytes::{BytesMut, BufMut};
 use tokio_io::codec::{Encoder, Decoder};
-use tokio_proto::multiplex::RequestId;
 use errors::DecodeError;
 use message::Message;
 
 pub struct Codec;
 
 impl Decoder for Codec {
-    type Item = (RequestId, Message);
+    type Item = Message;
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<Self::Item>> {
@@ -18,11 +17,7 @@ impl Decoder for Codec {
             loop {
                 match Message::decode(&mut buf) {
                     Ok(message) => {
-                        res = match message {
-                            Message::Response { id, .. } |
-                            Message::Request { id, .. } => Ok(Some((id as RequestId, message))),
-                            _ => Ok(Some((u64::max_value() as RequestId, message))),
-                        };
+                        res = Ok(Some(message));
                         break;
                     }
                     Err(err) => {
@@ -48,22 +43,12 @@ impl Decoder for Codec {
     }
 }
 
-fn id_from_u64(id: u64) -> u32 {
-    (id & u32::max_value() as u64) as u32
-}
-
 impl Encoder for Codec {
-    type Item = (RequestId, Message);
+    type Item = Message;
     type Error = io::Error;
 
-    fn encode(&mut self, input: Self::Item, buf: &mut BytesMut) -> io::Result<()> {
-        let mut input = input;
-        match input.1 {
-            Message::Request { ref mut id, .. } |
-            Message::Response { ref mut id, .. } => *id = id_from_u64(input.0),
-            _ => {}
-        }
-        let data = input.1.pack();
+    fn encode(&mut self, msg: Self::Item, buf: &mut BytesMut) -> io::Result<()> {
+        let data = msg.pack();
         buf.reserve(data.len());
         buf.put_slice(&data);
         Ok(())
@@ -73,7 +58,7 @@ impl Encoder for Codec {
 #[test]
 fn decode() {
     use message::Message;
-    fn try_decode(input: &[u8], rest: &[u8]) -> io::Result<Option<(RequestId, Message)>> {
+    fn try_decode(input: &[u8], rest: &[u8]) -> io::Result<Option<Message>> {
         let mut codec = Codec {};
         let mut buf = BytesMut::from(input);
         let result = codec.decode(&mut buf);
@@ -88,13 +73,11 @@ fn decode() {
     };
 
     // A single message, nothing is left
-    assert_eq!(try_decode(&msg.pack(), b"").unwrap(),
-               Some((1234, msg.clone())));
+    assert_eq!(try_decode(&msg.pack(), b"").unwrap(), Some(msg.clone()));
 
     // The first message is decoded, the second stays in the buffer
     let mut bytes = [&msg.pack()[..], &msg.pack()[..]].concat();
-    assert_eq!(try_decode(&bytes, &msg.pack()).unwrap(),
-               Some((1234, msg.clone())));
+    assert_eq!(try_decode(&bytes, &msg.pack()).unwrap(), Some(msg.clone()));
 
     // An incomplete message: nothing gets out and everything stays
     let packed_msg = msg.pack();
@@ -103,5 +86,5 @@ fn decode() {
 
     // An invalid message: it gets eaten, and the next message get read.
     bytes = [&vec![0, 1, 2], &msg.pack()[..]].concat();
-    assert_eq!(try_decode(&bytes, b"").unwrap(), Some((1234, msg.clone())));
+    assert_eq!(try_decode(&bytes, b"").unwrap(), Some(msg.clone()));
 }
