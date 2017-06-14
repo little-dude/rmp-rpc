@@ -1,3 +1,4 @@
+#![feature(associated_type_defaults)]
 //! This crate provides facilities to use the `MessagePack` remote procedure call system
 //! (`MessagePack-RPC`) in Rust.
 
@@ -24,9 +25,9 @@ mod protocol;
 mod server;
 mod client;
 
-pub use server::serve;
 pub use client::Client;
-pub use message::Message;
+pub use server::{serve, Service, ServiceBuilder};
+pub use message::{Request, Response, Notification, Message};
 
 /// Re-exports from [rmpv](https://docs.rs/rmpv)
 pub use rmpv::{Value, Integer, Utf8String};

@@ -66,11 +66,11 @@ fn decode() {
         result
     }
 
-    let msg = Message::Request {
+    let msg = Message::Request(Request {
         id: 1234,
         method: "dummy".to_string(),
         params: Vec::new(),
-    };
+    });
 
     // A single message, nothing is left
     assert_eq!(try_decode(&msg.pack(), b"").unwrap(), Some(msg.clone()));

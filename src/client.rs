@@ -8,7 +8,7 @@ use tokio_service::Service;
 
 use std::io;
 use std::net::SocketAddr;
-use message::Message;
+use message::{self, Message, Request};
 use protocol::Protocol;
 use rmpv::Value;
 
@@ -22,27 +22,26 @@ pub type Response = Box<Future<Item = Result<Value, Value>, Error = io::Error>>;
 impl Client {
     /// Connect to a remote server.
     /// The client returned can be used to perform requests.
-    pub fn connect(addr: &SocketAddr,
-                   handle: &Handle)
-                   -> Box<Future<Item = Client, Error = io::Error>> {
-        let ret = TcpClient::new(Protocol)
-            .connect(addr, handle)
-            .map(Client);
+    pub fn connect(
+        addr: &SocketAddr,
+        handle: &Handle,
+    ) -> Box<Future<Item = Client, Error = io::Error>> {
+        let ret = TcpClient::new(Protocol).connect(addr, handle).map(Client);
         Box::new(ret)
     }
 
     /// Perform a msgpack-rpc request.
     pub fn request(&self, method: &str, params: Vec<Value>) -> Response {
-        let req = Message::Request {
+        let req = Message::Request(Request {
             // we can set this to 0 because under the hood it's handle by tokio at the
             // protocol/codec level
             id: 0,
             method: method.to_string(),
             params: params,
-        };
+        });
         let resp = self.call(req).and_then(|resp| {
             match resp {
-                Message::Response { result, .. } => Ok(result),
+                Message::Response(message::Response { result, .. }) => Ok(result),
                 _ => {
                     // not sure what to do here.
                     // i don't think this can happen, so let's just panic for now

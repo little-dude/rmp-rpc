@@ -1,111 +1,154 @@
 //! Building blocks for building msgpack-rpc servers.
 use std::io;
-use tokio_service::{NewService, Service};
 use std::net::SocketAddr;
-use tokio_proto::TcpServer;
-use futures::Future;
-use message::Message;
- // use protocol::Protocol;
-use protocol::{ServerProto};
+use std::collections::HashMap;
+use tokio_core::net::{TcpStream, TcpListener};
+use tokio_core::reactor::Core;
+use tokio_io::AsyncRead;
+use tokio_io::codec::Framed;
+use futures::{Async, Poll, Future, Stream, Sink};
+use message::{Response, Request, Notification, Message};
+use std::error::Error;
+use codec::Codec;
 
-struct MsgpackRpc<T> {
-    inner: T,
+pub trait Service {
+    type Error: Error;
+
+    fn handle_request(
+        &mut self,
+        request: &Request,
+    ) -> Box<Future<Item = Result<Response, Self::Error>, Error = io::Error>>;
+
+    fn handle_notification(
+        &mut self,
+        notification: &Notification,
+    ) -> Box<Future<Item = Result<(), Self::Error>, Error = io::Error>>;
 }
 
-/// Start a msgpack-RPC server and block until the server finishes.
-///
-/// A server must implement
-/// [`tokio_service::NewService`](https://tokio-rs.github.io/tokio-service/tokio_service/trait.NewService.html)
-/// and [`tokio_service::Service`](https://tokio-rs.github.io/tokio-service/tokio_service/trait.Service.html).
-///
-/// # Examples
-///
-/// ```rust,no_run
-/// extern crate futures;
-/// extern crate tokio_service;
-/// extern crate rmp_rpc;
-/// 
-/// use std::io;
-/// use std::net::SocketAddr;
-/// use tokio_service::{NewService, Service};
-/// use rmp_rpc::{serve, Message};
-/// use futures::Future;
-/// 
-/// 
-/// #[derive(Clone)]
-/// pub struct MyServer;
-/// 
-/// impl NewService for MyServer {
-///     type Request = Message;
-///     type Response = Message;
-///     type Error = io::Error;
-///     type Instance = MyServer;
-/// 
-///     fn new_service(&self) -> io::Result<Self::Instance> {
-///         Ok(self.clone())
-///     }
-/// }
-/// 
-/// impl Service for MyServer {
-///     type Request = Message;
-///     type Response = Message;
-///     type Error = io::Error;
-///     type Future = Box<Future<Item=Message, Error=io::Error>>;
-/// 
-///     fn call(&self, msg: Message) -> Self::Future {
-///         match msg {
-///             Message::Request { .. } => {
-///                 // Handle the request
-///                 unimplemented!()
-///             }
-///             Message::Notification { .. } => {
-///                 // Handle the notification
-///                 unimplemented!()
-///             }
-///             Message::Response { .. } => {
-///                 // A server is not expecting a response. Handle the error
-///                 unimplemented!()
-///             }
-///         }
-///     }
-/// }
-/// 
-/// fn main() { serve("127.0.0.1:12345".parse().unwrap(), MyServer) }
-/// ```
-///
-pub fn serve<T>(addr: SocketAddr, new_service: T)
-    where T: NewService<Request = Message, Response = Message, Error = io::Error> + Send + Sync + 'static,
-{
-    let new_service = MsgpackRpc { inner: new_service };
-    TcpServer::new(ServerProto {}, addr).serve(new_service);
+pub trait ServiceBuilder {
+    type Service: Service + 'static;
+
+    fn build(&self) -> Self::Service;
 }
 
-impl<T> Service for MsgpackRpc<T>
-    where T: Service<Request = Message, Response = Message, Error = io::Error>,
-          T::Future: 'static
-{
-    type Request = Message;
-    type Response = Message;
-    type Error = io::Error;
-    type Future = Box<Future<Item = Message, Error = io::Error>>;
+pub struct Protocol<S: Service> {
+    service: S,
+    done: bool,
+    stream: Framed<TcpStream, Codec>,
+    request_tasks: HashMap<u32, Box<Future<Item = Result<Response, S::Error>, Error = io::Error>>>,
+    notification_tasks: Vec<Box<Future<Item = Result<(), S::Error>, Error = io::Error>>>,
+}
 
-    fn call(&self, req: Message) -> Self::Future {
-        println!("call");
-        Box::new(self.inner.call(req))
+impl<S> Protocol<S>
+where
+    S: Service + 'static,
+{
+    fn new(service: S, tcp_stream: TcpStream) -> Self {
+        Protocol {
+            service: service,
+            done: false,
+            stream: tcp_stream.framed(Codec),
+            request_tasks: HashMap::new(),
+            notification_tasks: Vec::new(),
+        }
+    }
+
+    fn handle_msg(&mut self, msg: Message) {
+        match msg {
+            Message::Request(request) => {
+                let response = self.service.handle_request(&request);
+                self.request_tasks.insert(request.id, response);
+            }
+            Message::Notification(notification) => {
+                let outcome = self.service.handle_notification(&notification);
+                self.notification_tasks.push(outcome);
+            }
+            Message::Response(_) => {
+                return;
+            }
+        }
+    }
+
+    fn process_notifications(&mut self) {
+        let mut done = vec![];
+        for (idx, task) in self.notification_tasks.iter_mut().enumerate() {
+            match task.poll().unwrap() {
+                Async::Ready(Ok(())) => done.push(idx),
+                Async::Ready(Err(e)) => panic!("{}", e),
+                Async::NotReady => continue,
+            }
+        }
+        for idx in done.iter().rev() {
+            self.notification_tasks.remove(*idx);
+        }
+    }
+
+    fn process_requests(&mut self) {
+        let mut done = vec![];
+        for (id, task) in &mut self.request_tasks {
+            match task.poll().unwrap() {
+                Async::Ready(Ok(mut response)) => {
+                    response.id = *id;
+                    done.push(*id);
+                    if !self.stream
+                        .start_send(Message::Response(response))
+                        .unwrap()
+                        .is_ready()
+                    {
+                        panic!("the sink is full")
+                    }
+                }
+                Async::Ready(Err(e)) => panic!("{}", e),
+                Async::NotReady => continue,
+            }
+        }
+
+        for idx in done.iter_mut().rev() {
+            let _ = self.request_tasks.remove(idx);
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.stream.poll_complete().unwrap().is_ready() {
+            self.done = true;
+        } else {
+            self.done = false;
+        }
     }
 }
 
-impl<T> NewService for MsgpackRpc<T>
-    where T: NewService<Request = Message, Response = Message, Error = io::Error>,
-          <T::Instance as Service>::Future: 'static
+impl<S> Future for Protocol<S>
+where
+    S: Service + 'static,
 {
-    type Request = Message;
-    type Response = Message;
+    type Item = ();
     type Error = io::Error;
-    type Instance = MsgpackRpc<T::Instance>;
 
-    fn new_service(&self) -> io::Result<Self::Instance> {
-        let inner = try!(self.inner.new_service());
-        Ok(MsgpackRpc { inner: inner })
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        // TODO: graceful shutdown (ie return Async::Ready)
+        loop {
+            match self.stream.poll().unwrap() {
+                Async::Ready(Some(msg)) => self.handle_msg(msg),
+                Async::Ready(None) => panic!("shutdown is not implemented"),
+                Async::NotReady => break,
+            }
+        }
+        self.process_notifications();
+        self.process_requests();
+        self.flush();
+        Ok(Async::NotReady)
     }
+}
+
+
+pub fn serve<B: ServiceBuilder>(address: &SocketAddr, service_builder: B) {
+    let mut core = Core::new().unwrap();
+    let handle = core.handle();
+    let listener = TcpListener::bind(address, &handle).unwrap();
+    core.run(listener.incoming().for_each(|(stream, _address)| {
+        let service = service_builder.build();
+        let proto = Protocol::new(service, stream);
+        handle.spawn(proto.map_err(|_| ()));
+        Ok(())
+    })).unwrap()
 }
