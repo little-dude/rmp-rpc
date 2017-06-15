@@ -8,7 +8,7 @@ use tokio_core::reactor::Core;
 use std::{io, thread};
 use std::time::Duration;
 use std::net::SocketAddr;
-use futures::{future, Future};
+use futures::{future, Future, BoxFuture};
 
 
 #[derive(Clone)]
@@ -31,17 +31,14 @@ impl Service for HelloWorld {
     fn handle_request(
         &mut self,
         request: &Request,
-    ) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>> {
+    ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error> {
         Box::new(match request.method.as_str() {
             "hello" => future::ok(Ok("hello")),
             method => future::ok(Err(format!("unknown method {}", method))),
         })
     }
 
-    fn handle_notification(
-        &mut self,
-        _notification: &Notification,
-    ) -> Box<Future<Item = (), Error = Self::Error>> {
+    fn handle_notification(&mut self, _notification: &Notification) -> BoxFuture<(), Self::Error> {
         unimplemented!();
     }
 }

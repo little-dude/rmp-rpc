@@ -6,7 +6,7 @@ use tokio_core::net::{TcpStream, TcpListener};
 use tokio_core::reactor::Core;
 use tokio_io::AsyncRead;
 use tokio_io::codec::Framed;
-use futures::{Async, Poll, Future, Stream, Sink};
+use futures::{Async, Poll, Future, Stream, Sink, BoxFuture};
 use message::{Response, Request, Notification, Message};
 use std::error::Error;
 use codec::Codec;
@@ -20,12 +20,8 @@ pub trait Service {
     fn handle_request(
         &mut self,
         request: &Request,
-    ) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>>;
-
-    fn handle_notification(
-        &mut self,
-        notification: &Notification,
-    ) -> Box<Future<Item = (), Error = Self::Error>>;
+    ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error>;
+    fn handle_notification(&mut self, notification: &Notification) -> BoxFuture<(), Self::Error>;
 }
 
 pub trait ServiceBuilder {
@@ -38,8 +34,8 @@ pub struct Protocol<S: Service> {
     service: S,
     done: bool,
     stream: Framed<TcpStream, Codec>,
-    request_tasks: HashMap<u32, Box<Future<Item = Result<S::T, S::E>, Error = S::Error>>>,
-    notification_tasks: Vec<Box<Future<Item = (), Error = S::Error>>>,
+    request_tasks: HashMap<u32, BoxFuture<Result<S::T, S::E>, S::Error>>,
+    notification_tasks: Vec<BoxFuture<(), S::Error>>,
 }
 
 impl<S> Protocol<S>
