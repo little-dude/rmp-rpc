@@ -10,19 +10,22 @@ use futures::{Async, Poll, Future, Stream, Sink};
 use message::{Response, Request, Notification, Message};
 use std::error::Error;
 use codec::Codec;
+use rmpv::Value;
 
 pub trait Service {
     type Error: Error;
+    type T: Into<Value>;
+    type E: Into<Value>;
 
     fn handle_request(
         &mut self,
         request: &Request,
-    ) -> Box<Future<Item = Result<Response, Self::Error>, Error = io::Error>>;
+    ) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>>;
 
     fn handle_notification(
         &mut self,
         notification: &Notification,
-    ) -> Box<Future<Item = Result<(), Self::Error>, Error = io::Error>>;
+    ) -> Box<Future<Item = (), Error = Self::Error>>;
 }
 
 pub trait ServiceBuilder {
@@ -35,8 +38,8 @@ pub struct Protocol<S: Service> {
     service: S,
     done: bool,
     stream: Framed<TcpStream, Codec>,
-    request_tasks: HashMap<u32, Box<Future<Item = Result<Response, S::Error>, Error = io::Error>>>,
-    notification_tasks: Vec<Box<Future<Item = Result<(), S::Error>, Error = io::Error>>>,
+    request_tasks: HashMap<u32, Box<Future<Item = Result<S::T, S::E>, Error = S::Error>>>,
+    notification_tasks: Vec<Box<Future<Item = (), Error = S::Error>>>,
 }
 
 impl<S> Protocol<S>
@@ -73,8 +76,7 @@ where
         let mut done = vec![];
         for (idx, task) in self.notification_tasks.iter_mut().enumerate() {
             match task.poll().unwrap() {
-                Async::Ready(Ok(())) => done.push(idx),
-                Async::Ready(Err(e)) => panic!("{}", e),
+                Async::Ready(_) => done.push(idx),
                 Async::NotReady => continue,
             }
         }
@@ -87,18 +89,16 @@ where
         let mut done = vec![];
         for (id, task) in &mut self.request_tasks {
             match task.poll().unwrap() {
-                Async::Ready(Ok(mut response)) => {
-                    response.id = *id;
+                Async::Ready(response) => {
+                    let msg = Message::Response(Response {
+                        id: *id,
+                        result: response.map(|v| v.into()).map_err(|e| e.into()),
+                    });
                     done.push(*id);
-                    if !self.stream
-                        .start_send(Message::Response(response))
-                        .unwrap()
-                        .is_ready()
-                    {
+                    if !self.stream.start_send(msg).unwrap().is_ready() {
                         panic!("the sink is full")
                     }
                 }
-                Async::Ready(Err(e)) => panic!("{}", e),
                 Async::NotReady => continue,
             }
         }

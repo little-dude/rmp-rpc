@@ -3,8 +3,7 @@ extern crate tokio_core;
 extern crate rmp_rpc;
 
 
-use rmp_rpc::{ServiceBuilder, Service, serve, Client, Response, Request, Notification, Value,
-              Utf8String};
+use rmp_rpc::{ServiceBuilder, Service, serve, Client, Request, Notification};
 use tokio_core::reactor::Core;
 use std::{io, thread};
 use std::time::Duration;
@@ -26,33 +25,23 @@ impl ServiceBuilder for HelloWorld {
 
 impl Service for HelloWorld {
     type Error = io::Error;
+    type T = &'static str;
+    type E = String;
 
     fn handle_request(
         &mut self,
         request: &Request,
-    ) -> Box<Future<Item = Result<Response, Self::Error>, Error = io::Error>> {
+    ) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>> {
         Box::new(match request.method.as_str() {
-            "hello" => future::ok(Ok(Response {
-                result: Ok(Value::String(Utf8String::from("hello"))),
-                id: 0,
-            })),
-            "world" => future::ok(Ok(Response {
-                result: Ok(Value::String(Utf8String::from("world"))),
-                id: 0,
-            })),
-            method => future::ok(Ok(Response {
-                result: Err(Value::String(Utf8String::from(
-                    format!("unknown method {}", method).as_str(),
-                ))),
-                id: 0,
-            })),
+            "hello" => future::ok(Ok("hello")),
+            method => future::ok(Err(format!("unknown method {}", method))),
         })
     }
 
     fn handle_notification(
         &mut self,
         _notification: &Notification,
-    ) -> Box<Future<Item = Result<(), Self::Error>, Error = io::Error>> {
+    ) -> Box<Future<Item = (), Error = Self::Error>> {
         unimplemented!();
     }
 }
