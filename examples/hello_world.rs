@@ -18,7 +18,6 @@ impl ServiceBuilder for HelloWorld {
     type Service = HelloWorld;
 
     fn build(&self) -> Self::Service {
-        println!("server: new_service called.");
         self.clone()
     }
 }
@@ -34,6 +33,7 @@ impl Service for HelloWorld {
     ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error> {
         Box::new(match request.method.as_str() {
             "hello" => future::ok(Ok("hello")),
+            "world" => future::ok(Ok("world")),
             method => future::ok(Err(format!("unknown method {}", method))),
         })
     }
@@ -52,17 +52,22 @@ fn main() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
-    core.run(Client::connect(&addr, &handle).and_then(|client| {
-        println!("Client connected");
-        client
-            .request("hello", vec![])
-            .and_then(move |response| {
-                println!("client: {:?}", response);
-                client.request("world", vec![])
+    core.run(
+        Client::connect(&addr, &handle)
+            .and_then(|mut client| {
+                client.request("hello", &[]).and_then(move |response| {
+                    println!("{:?}", response);
+                    client.request("dummy", &[]).and_then(|response| {
+                        println!("{:?}", response);
+                        Ok(client)
+                    })
+                })
             })
-            .and_then(|response| {
-                println!("client: {:?}", response);
-                Ok(())
-            })
-    })).unwrap();
+            .and_then(|mut client| {
+                client.request("world", &[]).and_then(|response| {
+                    println!("{:?}", response);
+                    Ok(())
+                })
+            }),
+    ).unwrap();
 }

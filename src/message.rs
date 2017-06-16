@@ -46,9 +46,9 @@ impl Message {
         }
 
         let id = if let Value::Integer(id) = array[1] {
-            id.as_u64().and_then(|id| Some(id as u32)).ok_or(
-                DecodeError::Invalid,
-            )?
+            id.as_u64()
+                .and_then(|id| Some(id as u32))
+                .ok_or(DecodeError::Invalid)?
         } else {
             return Err(DecodeError::Invalid);
         };
@@ -75,17 +75,18 @@ impl Message {
         }
 
         let id = if let Value::Integer(id) = array[1] {
-            id.as_u64().and_then(|id| Some(id as u32)).ok_or(
-                DecodeError::Invalid,
-            )?
+            id.as_u64()
+                .and_then(|id| Some(id as u32))
+                .ok_or(DecodeError::Invalid)?
         } else {
             return Err(DecodeError::Invalid);
         };
 
         let method = if let Value::String(ref method) = array[2] {
-            method.as_str().and_then(|s| Some(s.to_string())).ok_or(
-                DecodeError::Invalid,
-            )?
+            method
+                .as_str()
+                .and_then(|s| Some(s.to_string()))
+                .ok_or(DecodeError::Invalid)?
         } else {
             return Err(DecodeError::Invalid);
         };
@@ -139,10 +140,10 @@ impl Message {
     fn as_value(&self) -> Value {
         match *self {
             Message::Request(Request {
-                                 id,
-                                 ref method,
-                                 ref params,
-                             }) => {
+                id,
+                ref method,
+                ref params,
+            }) => {
                 Value::Array(vec![
                     Value::Integer(Integer::from(REQUEST_MESSAGE)),
                     Value::Integer(Integer::from(id)),
@@ -164,9 +165,9 @@ impl Message {
                 ])
             }
             Message::Notification(Notification {
-                                      ref method,
-                                      ref params,
-                                  }) => {
+                ref method,
+                ref params,
+            }) => {
                 Value::Array(vec![
                     Value::Integer(Integer::from(NOTIFICATION_MESSAGE)),
                     Value::String(Utf8String::from(method.as_str())),

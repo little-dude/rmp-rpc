@@ -30,7 +30,7 @@ pub trait ServiceBuilder {
     fn build(&self) -> Self::Service;
 }
 
-pub struct Protocol<S: Service> {
+struct Server<S: Service> {
     service: S,
     done: bool,
     stream: Framed<TcpStream, Codec>,
@@ -38,12 +38,12 @@ pub struct Protocol<S: Service> {
     notification_tasks: Vec<BoxFuture<(), S::Error>>,
 }
 
-impl<S> Protocol<S>
+impl<S> Server<S>
 where
     S: Service + 'static,
 {
     fn new(service: S, tcp_stream: TcpStream) -> Self {
-        Protocol {
+        Server {
             service: service,
             done: false,
             stream: tcp_stream.framed(Codec),
@@ -113,7 +113,7 @@ where
     }
 }
 
-impl<S> Future for Protocol<S>
+impl<S> Future for Server<S>
 where
     S: Service + 'static,
 {
@@ -121,11 +121,12 @@ where
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        // TODO: graceful shutdown (ie return Async::Ready)
         loop {
             match self.stream.poll().unwrap() {
                 Async::Ready(Some(msg)) => self.handle_msg(msg),
-                Async::Ready(None) => panic!("shutdown is not implemented"),
+                Async::Ready(None) => {
+                    return Ok(Async::Ready(()));
+                }
                 Async::NotReady => break,
             }
         }
@@ -143,7 +144,7 @@ pub fn serve<B: ServiceBuilder>(address: &SocketAddr, service_builder: B) {
     let listener = TcpListener::bind(address, &handle).unwrap();
     core.run(listener.incoming().for_each(|(stream, _address)| {
         let service = service_builder.build();
-        let proto = Protocol::new(service, stream);
+        let proto = Server::new(service, stream);
         handle.spawn(proto.map_err(|_| ()));
         Ok(())
     })).unwrap()

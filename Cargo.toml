@@ -16,7 +16,4 @@ bytes = "*"
 futures = "*"
 tokio-io = "*"
 tokio-core = "*"
-tokio-proto = "*"
-tokio-service = "*"
-futures-cpupool = "*"
 clippy = {version = ">=0.0, <0.1", optional = true}
