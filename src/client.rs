@@ -6,7 +6,7 @@ use std::io;
 use std::net::SocketAddr;
 use message::{Request, Notification, Message};
 use rmpv::Value;
-use futures::{future, Async, Poll, Future, BoxFuture, Stream, Sink};
+use futures::{Async, Poll, Future, Stream, Sink};
 use futures::sync::{mpsc, oneshot};
 use tokio_io::AsyncRead;
 use codec::Codec;
@@ -90,17 +90,31 @@ impl ClientProxy {
         Ack { inner: rx }
     }
 
-    pub fn connect(addr: &SocketAddr, handle: &Handle) -> BoxFuture<ClientProxy, ()> {
-        let (requests_tx, requests_rx) = mpsc::unbounded();
-        let (notifications_tx, notifications_rx) = mpsc::unbounded();
+    pub fn connect(addr: &SocketAddr, handle: &Handle) -> Connection {
+        let (client_proxy_tx, client_proxy_rx) = oneshot::channel();
+        let (error_tx, error_rx) = oneshot::channel();
 
-        let client_proxy = ClientProxy {
-            requests_tx: requests_tx,
-            notifications_tx: notifications_tx,
+        let connection = Connection {
+            client_proxy_rx: client_proxy_rx,
+            error_rx: error_rx,
+            client_proxy_chan_cancelled: false,
+            error_chan_cancelled: false,
         };
 
         let client = TcpStream::connect(addr, handle)
             .and_then(|stream| {
+                let (requests_tx, requests_rx) = mpsc::unbounded();
+                let (notifications_tx, notifications_rx) = mpsc::unbounded();
+
+                let client_proxy = ClientProxy {
+                    requests_tx: requests_tx,
+                    notifications_tx: notifications_tx,
+                };
+
+                if client_proxy_tx.send(client_proxy).is_err() {
+                    panic!("Failed to send client proxy to connection");
+                }
+
                 Client {
                     request_id: 0,
                     shutdown: false,
@@ -111,10 +125,70 @@ impl ClientProxy {
                     pending_notifications: Vec::new(),
                 }
             })
-            .map_err(|_| ());
+            .or_else(|e| {
+                if let Err(e) = error_tx.send(e) {
+                    panic!("Failed to send client proxy to connection: {:?}", e);
+                }
+                Err(())
+            });
 
+        // Start the `Client`
         handle.spawn(client);
-        Box::new(future::ok(client_proxy))
+
+        // Return the `Connection`. It's a future that resolves when it receives the `ClientProxy`.
+        connection
+    }
+}
+
+pub struct Connection {
+    client_proxy_rx: oneshot::Receiver<ClientProxy>,
+    client_proxy_chan_cancelled: bool,
+    error_rx: oneshot::Receiver<io::Error>,
+    error_chan_cancelled: bool,
+}
+
+impl Connection {
+    fn poll_error(&mut self) -> Option<io::Error> {
+        if self.error_chan_cancelled {
+            return None;
+        }
+        match self.error_rx.poll() {
+            Ok(Async::Ready(e)) => Some(e),
+            Ok(Async::NotReady) => None,
+            Err(_) => {
+                self.error_chan_cancelled = true;
+                None
+            }
+        }
+    }
+    fn poll_client_proxy(&mut self) -> Option<ClientProxy> {
+        if self.client_proxy_chan_cancelled {
+            return None;
+        }
+        match self.client_proxy_rx.poll() {
+            Ok(Async::Ready(client_proxy)) => Some(client_proxy),
+            Ok(Async::NotReady) => None,
+            Err(_) => {
+                self.client_proxy_chan_cancelled = true;
+                None
+            }
+        }
+    }
+}
+impl Future for Connection {
+    type Item = ClientProxy;
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        if let Some(client_proxy) = self.poll_client_proxy() {
+            Ok(Async::Ready(client_proxy))
+        } else if let Some(e) = self.poll_error() {
+            Err(e)
+        } else if self.client_proxy_chan_cancelled && self.error_chan_cancelled {
+            panic!("Failed to receive outcome of the connection");
+        } else {
+            Ok(Async::NotReady)
+        }
     }
 }
 

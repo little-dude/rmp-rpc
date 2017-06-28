@@ -20,6 +20,7 @@ mod server;
 mod client;
 
 pub use client::ClientProxy as Client;
+pub use client::Connection;
 pub use server::{serve, Service, ServiceBuilder};
 pub use message::{Request, Response, Notification, Message};
 

@@ -52,8 +52,12 @@ fn main() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
-    core.run(
+    let _ = core.run(
         Client::connect(&addr, &handle)
+            .or_else(|e| {
+                println!("Connection to server failed: {}", e);
+                Err(())
+            })
             .and_then(|mut client| {
                 client.request("hello", &[]).and_then(move |response| {
                     println!("{:?}", response);
@@ -69,5 +73,5 @@ fn main() {
                     Ok(())
                 })
             }),
-    ).unwrap();
+    );
 }
