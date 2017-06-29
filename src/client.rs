@@ -1,3 +1,4 @@
+///! This module provides a `MessagePack-RPC` asynchronous client.
 use tokio_core::net::TcpStream;
 use tokio_core::reactor::Handle;
 use tokio_io::codec::Framed;
@@ -12,7 +13,7 @@ use tokio_io::AsyncRead;
 use codec::Codec;
 use std::collections::HashMap;
 
-
+/// A future response.to a request.
 pub struct Response {
     inner: oneshot::Receiver<Result<Value, Value>>,
 }
@@ -26,15 +27,7 @@ impl Future for Response {
     }
 }
 
-impl Clone for ClientProxy {
-    fn clone(&self) -> Self {
-        ClientProxy {
-            requests_tx: self.requests_tx.clone(),
-            notifications_tx: self.notifications_tx.clone(),
-        }
-    }
-}
-
+/// A future that signals that a notifications has been sent to the server.
 pub struct Ack {
     inner: oneshot::Receiver<()>,
 }
@@ -48,9 +41,66 @@ impl Future for Ack {
     }
 }
 
+/// A client used to send requests on notifications to a `MessagePack-RPC` server.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// extern crate futures;
+/// extern crate rmp_rpc;
+/// extern crate tokio_core;
+///
+/// use std::net::SocketAddr;
+///
+/// use futures::Future;
+/// use rmp_rpc::{Value, Integer, Client};
+/// use tokio_core::reactor::Core;
+/// 
+/// fn main() {
+///    // Create the tokio event loop
+///    let mut core = Core::new().unwrap();
+///    let handle = core.handle();
+///    
+///    let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
+///    
+///    let task = 
+///        // Connect to the server
+///        Client::connect(&addr, &handle)
+///        .or_else(|e| {
+///            println!("Connection to server failed: {}", e);
+///            Err(())
+///        })
+///        .and_then(|client| {
+///            // Send a msgpack-rpc notification, with method "ping" and no argument
+///            client.notify("ping", &[]).and_then(|_| {
+///                // Return the client, so that we can reuse it
+///                Ok(client)
+///            })
+///        })
+///        .and_then(|client| {
+///            // Send a msgpack-rpc request, with method "add" and two arguments
+///            let args = vec![
+///                Value::Integer(Integer::from(3)), Value::Integer(Integer::from(4))];
+///            client.request("add", &args).and_then(|response| {
+///                // Handle the response [...]
+///                Ok(())
+///            })
+///        });
+///    core.run(task).unwrap();
+/// }
+/// ```
 pub struct ClientProxy {
     requests_tx: mpsc::UnboundedSender<(Request, oneshot::Sender<Result<Value, Value>>)>,
     notifications_tx: mpsc::UnboundedSender<(Notification, oneshot::Sender<()>)>,
+}
+
+impl Clone for ClientProxy {
+    fn clone(&self) -> Self {
+        ClientProxy {
+            requests_tx: self.requests_tx.clone(),
+            notifications_tx: self.notifications_tx.clone(),
+        }
+    }
 }
 
 struct Client {
@@ -66,7 +116,12 @@ struct Client {
 }
 
 impl ClientProxy {
-    pub fn request(&mut self, method: &str, params: &[Value]) -> Response {
+    /// Send a `MessagePack-RPC` request
+    pub fn request(&self, method: &str, params: &[Value]) -> Response {
+        trace!(
+            "ClientProxy: new request (method={}, params={:?})",
+            method,
+            params);
         let request = Request {
             id: 0,
             method: method.to_owned(),
@@ -80,7 +135,12 @@ impl ClientProxy {
         Response { inner: rx }
     }
 
-    pub fn notify(&mut self, method: &str, params: &[Value]) -> Ack {
+    /// Send a `MessagePack-RPC` notification
+    pub fn notify(&self, method: &str, params: &[Value]) -> Ack {
+        trace!(
+            "ClientProxy: new notification (method={}, params={:?})",
+            method,
+            params);
         let notification = Notification {
             method: method.to_owned(),
             params: Vec::from(params),
@@ -90,7 +150,9 @@ impl ClientProxy {
         Ack { inner: rx }
     }
 
+    /// Connect the client to a remote `MessagePack-RPC` server.
     pub fn connect(addr: &SocketAddr, handle: &Handle) -> Connection {
+        trace!("ClientProxy: trying to connect to {}", addr);
         let (client_proxy_tx, client_proxy_rx) = oneshot::channel();
         let (error_tx, error_rx) = oneshot::channel();
 
@@ -103,6 +165,7 @@ impl ClientProxy {
 
         let client = TcpStream::connect(addr, handle)
             .and_then(|stream| {
+                trace!("ClientProxy: connection established");
                 let (requests_tx, requests_rx) = mpsc::unbounded();
                 let (notifications_tx, notifications_rx) = mpsc::unbounded();
 
@@ -126,20 +189,20 @@ impl ClientProxy {
                 }
             })
             .or_else(|e| {
+                error!("ClientProxy: connection failed: {}", e);
                 if let Err(e) = error_tx.send(e) {
                     panic!("Failed to send client proxy to connection: {:?}", e);
                 }
                 Err(())
             });
 
-        // Start the `Client`
+        trace!("Spawning Client and returning Connection");
         handle.spawn(client);
-
-        // Return the `Connection`. It's a future that resolves when it receives the `ClientProxy`.
         connection
     }
 }
 
+/// A future that returns a `Client` when it completes successfully.
 pub struct Connection {
     client_proxy_rx: oneshot::Receiver<ClientProxy>,
     client_proxy_chan_cancelled: bool,
@@ -175,14 +238,17 @@ impl Connection {
         }
     }
 }
+
 impl Future for Connection {
     type Item = ClientProxy;
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         if let Some(client_proxy) = self.poll_client_proxy() {
+            trace!("Connection: terminating successfully and returning ClientProxy");
             Ok(Async::Ready(client_proxy))
         } else if let Some(e) = self.poll_error() {
+            trace!("Connection: terminating with an error {}", e);
             Err(e)
         } else if self.client_proxy_chan_cancelled && self.error_chan_cancelled {
             panic!("Failed to receive outcome of the connection");
@@ -196,10 +262,21 @@ impl Client {
     fn handle_msg(&mut self, msg: Message) {
         match msg {
             Message::Request(_) |
-            Message::Notification(_) => (),
+            Message::Notification(_) => {
+                trace!("Client: got a request or notification from server. Ignoring it.");
+            }
             Message::Response(response) => {
                 if let Some(response_sender) = self.pending_requests.remove(&response.id) {
+                    trace!(
+                        "Client: got a response from server: {:?}, \
+                         and found the corresponding pending request.",
+                        response);
                     response_sender.send(response.result).unwrap();
+                } else {
+                    trace!(
+                        "Client: got a response from server: {:?}, \
+                         but no corresponding pending request. Ignoring it.",
+                        response);
                 }
             }
         }
@@ -209,6 +286,9 @@ impl Client {
         loop {
             match self.notifications_rx.poll().unwrap() {
                 Async::Ready(Some((notification, ack_sender))) => {
+                    trace!(
+                        "Client: received notification from ClientProxy. \
+                         Forwarding it to the server.");
                     let send_task = self.stream
                         .start_send(Message::Notification(notification))
                         .unwrap();
@@ -218,6 +298,9 @@ impl Client {
                     self.pending_notifications.push(ack_sender);
                 }
                 Async::Ready(None) => {
+                    trace!(
+                        "Client: ClientProxy closed the remote end of the notifications channel. \
+                         Entering shutdown state.");
                     self.shutdown = true;
                     return;
                 }
@@ -231,6 +314,10 @@ impl Client {
             match self.requests_rx.poll().unwrap() {
                 Async::Ready(Some((mut request, response_sender))) => {
                     self.request_id += 1;
+                    trace!(
+                        "Client: received request from ClientProxy. \
+                         Forwarding it to the server with id {}.",
+                        self.request_id);
                     request.id = self.request_id;
                     let send_task = self.stream.start_send(Message::Request(request)).unwrap();
                     if !send_task.is_ready() {
@@ -240,6 +327,9 @@ impl Client {
                         .insert(self.request_id, response_sender);
                 }
                 Async::Ready(None) => {
+                    trace!(
+                        "Client: ClientProxy closed the remote end of the requests channel. \
+                         Entering shutdown state.");
                     self.shutdown = true;
                     return;
                 }
@@ -251,12 +341,12 @@ impl Client {
     fn flush(&mut self) {
         if self.stream.poll_complete().unwrap().is_ready() {
             for ack_sender in self.pending_notifications.drain(..) {
+                trace!("Client: letting ClientProxy know that pending notification has been sent");
                 ack_sender.send(()).unwrap();
             }
         }
     }
 }
-
 
 impl Future for Client {
     type Item = ();
@@ -266,14 +356,25 @@ impl Future for Client {
         loop {
             match self.stream.poll().unwrap() {
                 Async::Ready(Some(msg)) => self.handle_msg(msg),
-                Async::Ready(None) => return Ok(Async::Ready(())),
+                Async::Ready(None) => {
+                    trace!("Client: stream with server has been closed. Terminating successfully");
+                    return Ok(Async::Ready(()));
+                }
                 Async::NotReady => break,
             }
         }
         if self.shutdown {
             if self.pending_requests.is_empty() {
+                trace!(
+                    "Client: all pending requests have been processed. \
+                     Terminating successfully"
+                );
                 Ok(Async::Ready(()))
             } else {
+                trace!(
+                    "Client: not all pending requests have been processed. \
+                     Waiting before terminating"
+                );
                 Ok(Async::NotReady)
             }
         } else {

@@ -137,7 +137,6 @@ where
     }
 }
 
-
 pub fn serve<B: ServiceBuilder>(address: &SocketAddr, service_builder: B) {
     let mut core = Core::new().unwrap();
     let handle = core.handle();

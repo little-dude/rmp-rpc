@@ -191,11 +191,11 @@ impl Message {
 
 #[test]
 fn test_decode_request() {
-    let valid = Message::Request {
+    let valid = Message::Request(Request {
         id: 1234,
         method: "dummy".to_string(),
         params: Vec::new(),
-    };
+    });
     let bytes = valid.pack();
 
     // valid message

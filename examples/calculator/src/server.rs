@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::io;
-use rmp_rpc::{ServiceBuilder, Service, Value, Request, Notification};
+use rmp_rpc::{ServiceBuilder, Service, Request, Notification};
+use rmpv::Value;
 use futures::{future, BoxFuture};
 
 #[derive(Clone)]

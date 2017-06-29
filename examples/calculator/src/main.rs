@@ -1,18 +1,21 @@
 extern crate futures;
 extern crate tokio_core;
 extern crate rmp_rpc;
+extern crate rmpv;
 
 mod client;
 mod server;
 
-use client::Client;
-use server::Calculator;
-use tokio_core::reactor::Core;
-use futures::Future;
+use std::net::SocketAddr;
 use std::thread;
 use std::time::Duration;
-use std::net::SocketAddr;
+
+use futures::Future;
 use rmp_rpc::serve;
+use tokio_core::reactor::Core;
+
+use client::Client;
+use server::Calculator;
 
 fn main() {
 
@@ -23,7 +26,7 @@ fn main() {
 
     let mut reactor = Core::new().expect("Failed to start even loop");
     let client_future = Client::connect(&addr, &reactor.handle())
-        .and_then(|mut client| {
+        .and_then(|client| {
             println!("connected");
             client
                 .add(&[1, 2, 3])
@@ -36,7 +39,7 @@ fn main() {
                     Err(rpc_err)
                 })
         })
-        .and_then(|mut client| {
+        .and_then(|client| {
             client
                 .sub(&[1])
                 .and_then(|result| {
@@ -48,7 +51,7 @@ fn main() {
                     Err(rpc_err)
                 })
         })
-        .and_then(|mut client| {
+        .and_then(|client| {
             client
                 .res()
                 .and_then(|result| {
@@ -60,7 +63,7 @@ fn main() {
                     Err(rpc_err)
                 })
         })
-        .and_then(|mut client| {
+        .and_then(|client| {
             client
                 .clear()
                 .and_then(|result| {

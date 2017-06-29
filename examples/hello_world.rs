@@ -1,6 +1,8 @@
 extern crate futures;
 extern crate tokio_core;
 extern crate rmp_rpc;
+extern crate log;
+extern crate env_logger;
 
 
 use rmp_rpc::{ServiceBuilder, Service, serve, Client, Request, Notification};
@@ -44,6 +46,7 @@ impl Service for HelloWorld {
 }
 
 fn main() {
+    env_logger::init().unwrap();
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
 
     thread::spawn(move || serve(&addr, HelloWorld));
@@ -58,8 +61,8 @@ fn main() {
                 println!("Connection to server failed: {}", e);
                 Err(())
             })
-            .and_then(|mut client| {
-                client.request("hello", &[]).and_then(move |response| {
+            .and_then(|client| {
+                client.request("hello", &[]).and_then(|response| {
                     println!("{:?}", response);
                     client.request("dummy", &[]).and_then(|response| {
                         println!("{:?}", response);
@@ -67,7 +70,7 @@ fn main() {
                     })
                 })
             })
-            .and_then(|mut client| {
+            .and_then(|client| {
                 client.request("world", &[]).and_then(|response| {
                     println!("{:?}", response);
                     Ok(())

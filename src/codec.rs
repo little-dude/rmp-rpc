@@ -57,7 +57,7 @@ impl Encoder for Codec {
 
 #[test]
 fn decode() {
-    use message::Message;
+    use message::{Request, Message};
     fn try_decode(input: &[u8], rest: &[u8]) -> io::Result<Option<Message>> {
         let mut codec = Codec {};
         let mut buf = BytesMut::from(input);

@@ -8,3 +8,4 @@ description = "a simple calculator msgpack-rpc server and client"
 rmp-rpc = { path = "../.." }
 futures = "*"
 tokio-core = "*"
+rmpv = "*"

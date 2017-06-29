@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
-use rmp_rpc::{self, Value, Integer};
+use rmp_rpc;
+use rmpv::{Value, Integer};
 use futures::Future;
 use tokio_core::reactor::Handle;
 use std::{fmt, error};
@@ -20,7 +21,7 @@ impl Client {
         Box::new(client)
     }
 
-    pub fn add(&mut self, values: &[i64]) -> Response {
+    pub fn add(&self, values: &[i64]) -> Response {
         let params = values
             .iter()
             .map(|v| Value::Integer(Integer::from(*v)))
@@ -28,7 +29,7 @@ impl Client {
         self.request("add", params)
     }
 
-    pub fn sub(&mut self, values: &[i64]) -> Response {
+    pub fn sub(&self, values: &[i64]) -> Response {
         let params = values
             .iter()
             .map(|v| Value::Integer(Integer::from(*v)))
@@ -36,15 +37,15 @@ impl Client {
         self.request("sub", params)
     }
 
-    pub fn res(&mut self) -> Response {
+    pub fn res(&self) -> Response {
         self.request("res", vec![])
     }
 
-    pub fn clear(&mut self) -> Response {
+    pub fn clear(&self) -> Response {
         self.request("clear", vec![])
     }
 
-    fn request(&mut self, method: &str, params: Vec<Value>) -> Response {
+    fn request(&self, method: &str, params: Vec<Value>) -> Response {
         Box::new(self.0.request(method, &params).then(parse_response))
     }
 }
