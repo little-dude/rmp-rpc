@@ -5,7 +5,10 @@ extern crate log;
 extern crate env_logger;
 
 
-use rmp_rpc::{ServiceBuilder, Service, serve, Client, Request, Notification};
+use rmp_rpc::client::Client;
+use rmp_rpc::server::{ServiceBuilder, Service, serve};
+use rmp_rpc::{Request, Notification};
+
 use tokio_core::reactor::Core;
 use std::{io, thread};
 use std::time::Duration;

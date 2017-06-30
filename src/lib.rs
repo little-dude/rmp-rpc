@@ -18,10 +18,8 @@ extern crate tokio_core;
 mod errors;
 mod codec;
 mod message;
-mod server;
-mod client;
+pub mod server;
+pub mod client;
 
-pub use client::ClientProxy as Client;
-pub use server::{serve, Service, ServiceBuilder};
 pub use message::{Request, Response, Notification, Message};
 pub use rmpv::{Value, Integer, Utf8String};

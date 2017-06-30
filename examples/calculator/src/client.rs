@@ -7,14 +7,14 @@ use std::{fmt, error};
 
 pub type Response = Box<Future<Item = i64, Error = RpcError>>;
 
-pub struct Client(rmp_rpc::Client);
+pub struct Client(rmp_rpc::client::Client);
 
 impl Client {
     pub fn connect(
         addr: &SocketAddr,
         handle: &Handle,
     ) -> Box<Future<Item = Self, Error = RpcError>> {
-        let client = rmp_rpc::Client::connect(addr, handle)
+        let client = rmp_rpc::client::Client::connect(addr, handle)
             .map(Client)
             .map_err(|_| ())
             .map_err(From::from);

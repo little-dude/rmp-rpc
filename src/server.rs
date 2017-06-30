@@ -1,29 +1,93 @@
-//! Building blocks for building msgpack-rpc servers.
+///! Building blocks for building msgpack-rpc servers.
+///!
+///! Here is a server that returns the string "world" when a "hello" request is received, and that
+///! prints the method name of any notification it receives.
+///!
+///! ```rust,no_run
+///! extern crate futures;
+///! extern crate rmp_rpc;
+///!
+///! use std::io;
+///! use std::net::SocketAddr;
+///! 
+///! use futures::{future, BoxFuture};
+///! use rmp_rpc::{Request, Notification};
+///! use rmp_rpc::server::{Service, ServiceBuilder, serve};
+///!
+///! // Our server is dead simple and does not have any attribute
+///! #[derive(Clone)]
+///! struct ExampleServer;
+///!
+///! // The Service trait defines how the server will handle the requests and notifications it
+///! // receives.
+///! impl Service for ExampleServer {
+///!     type Error = io::Error;
+///!     type T = &'static str;
+///!     type E = String;
+///! 
+///!     fn handle_request(&mut self, request: &Request) -> BoxFuture<Result<Self::T, Self::E>, Self::Error> {
+///!         Box::new(match request.method.as_str() {
+///!             // return "world" if the request's method is "hello"
+///!             "hello" => future::ok(Ok("world")),
+///!             // otherwise, return an error
+///!             method => future::ok(Err(format!("unknown method {}", method))),
+///!         })
+///!     }
+///! 
+///!     fn handle_notification(&mut self, notification: &Notification) -> BoxFuture<(), Self::Error> {
+///!         // just pring the notification's method name
+///!         Box::new(future::ok(println!("{}", notification.method.as_str())))
+///!     }
+///! }
+///!
+///! // Since a new instance of our server is created for each client, we need to have a builder
+///! // type that builds ExampleServer instances. In this case, our builder type is ExampleServer
+///! // itself, but it could be any other type.
+///! impl ServiceBuilder for ExampleServer {
+///!     type Service = ExampleServer;
+///! 
+///!     fn build(&self) -> Self::Service { self.clone() }
+///! }
+///!
+///! fn main() {
+///!     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
+///!     // start the server. This block indefinitely
+///!     serve(&addr, ExampleServer);
+///! }
+///! ```
 use std::io;
-use std::net::SocketAddr;
 use std::collections::HashMap;
+use std::error::Error;
+use std::net::SocketAddr;
+
+use codec::Codec;
+use message::{Response, Request, Notification, Message};
+
+use futures::{Async, Poll, Future, Stream, Sink, BoxFuture};
+use rmpv::Value;
 use tokio_core::net::{TcpStream, TcpListener};
 use tokio_core::reactor::Core;
 use tokio_io::AsyncRead;
 use tokio_io::codec::Framed;
-use futures::{Async, Poll, Future, Stream, Sink, BoxFuture};
-use message::{Response, Request, Notification, Message};
-use std::error::Error;
-use codec::Codec;
-use rmpv::Value;
 
+/// The `Service` trait defines how the server handles the requests and notifications it receives.
 pub trait Service {
     type Error: Error;
     type T: Into<Value>;
     type E: Into<Value>;
 
+    /// Handle a `MessagePack-RPC` request
     fn handle_request(
         &mut self,
         request: &Request,
     ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error>;
+
+    /// Handle a `MessagePack-RPC` notification
     fn handle_notification(&mut self, notification: &Notification) -> BoxFuture<(), Self::Error>;
 }
 
+/// Since a new `Service` is created for each client, it is necessary to have a builder type that implements
+/// the `ServiceBuilder` trait.
 pub trait ServiceBuilder {
     type Service: Service + 'static;
 
@@ -137,6 +201,7 @@ where
     }
 }
 
+/// Create a tokio event loop and run the given `Service` on it.
 pub fn serve<B: ServiceBuilder>(address: &SocketAddr, service_builder: B) {
     let mut core = Core::new().unwrap();
     let handle = core.handle();

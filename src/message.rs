@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 use rmpv::{self, Value, Integer, Utf8String, decode};
 use std::convert::From;
 
-/// Represent a msgpack-rpc message as described in the
+/// Represents a `MessagePack-RPC` message as described in the
 /// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification)
 #[derive(PartialEq, Clone, Debug)]
 pub enum Message {
@@ -12,6 +12,8 @@ pub enum Message {
     Notification(Notification),
 }
 
+/// Represents a `MessagePack-RPC` request as described in the
+/// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification)
 #[derive(PartialEq, Clone, Debug)]
 pub struct Request {
     pub id: u32,
@@ -19,12 +21,16 @@ pub struct Request {
     pub params: Vec<Value>,
 }
 
+/// Represents a `MessagePack-RPC` response as described in the
+/// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification)
 #[derive(PartialEq, Clone, Debug)]
 pub struct Response {
     pub id: u32,
     pub result: Result<Value, Value>,
 }
 
+/// Represents a `MessagePack-RPC` notification as described in the
+/// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification)
 #[derive(PartialEq, Clone, Debug)]
 pub struct Notification {
     pub method: String,

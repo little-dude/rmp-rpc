@@ -11,7 +11,7 @@ use std::thread;
 use std::time::Duration;
 
 use futures::Future;
-use rmp_rpc::serve;
+use rmp_rpc::server::serve;
 use tokio_core::reactor::Core;
 
 use client::Client;

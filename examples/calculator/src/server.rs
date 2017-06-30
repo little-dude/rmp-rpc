@@ -1,8 +1,10 @@
 use std::sync::{Arc, Mutex};
 use std::io;
-use rmp_rpc::{ServiceBuilder, Service, Request, Notification};
-use rmpv::Value;
+
 use futures::{future, BoxFuture};
+use rmp_rpc::{Request, Notification};
+use rmp_rpc::server::{ServiceBuilder, Service};
+use rmpv::Value;
 
 #[derive(Clone)]
 pub struct Calculator {
