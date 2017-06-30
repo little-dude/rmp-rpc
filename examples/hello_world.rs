@@ -1,87 +1,83 @@
 extern crate futures;
 extern crate tokio_core;
-extern crate tokio_proto;
-extern crate tokio_service;
 extern crate rmp_rpc;
+extern crate log;
+extern crate env_logger;
 
 
-use tokio_service::{NewService, Service};
-use rmp_rpc::{serve, Client, Message, Value, Utf8String};
+use rmp_rpc::client::Client;
+use rmp_rpc::server::{ServiceBuilder, Service, serve};
+use rmp_rpc::{Request, Notification};
+
 use tokio_core::reactor::Core;
 use std::{io, thread};
 use std::time::Duration;
-use futures::{future, Future};
+use std::net::SocketAddr;
+use futures::{future, Future, BoxFuture};
 
 
 #[derive(Clone)]
 pub struct HelloWorld;
 
-impl NewService for HelloWorld {
-    type Request = Message;
-    type Response = Message;
-    type Error = io::Error;
-    type Instance = HelloWorld;
+impl ServiceBuilder for HelloWorld {
+    type Service = HelloWorld;
 
-    fn new_service(&self) -> io::Result<Self::Instance> {
-        println!("server: new_service called.");
-        Ok(self.clone())
+    fn build(&self) -> Self::Service {
+        self.clone()
     }
 }
 
 impl Service for HelloWorld {
-    type Request = Message;
-    type Response = Message;
     type Error = io::Error;
-    type Future = Box<Future<Item = Message, Error = io::Error>>;
+    type T = &'static str;
+    type E = String;
 
-    fn call(&self, msg: Message) -> Self::Future {
-        Box::new(
-            match msg {
-                Message::Request { method, .. } => {
-                    match method.as_str() {
-                        "hello" => future::ok(Message::Response {
-                            result: Ok(Value::String(Utf8String::from("hello"))),
-                            id: 0
-                        }),
-                        "world" => future::ok(Message::Response {
-                            result: Ok(Value::String(Utf8String::from("world"))),
-                            id: 0
-                        }),
-                        method => future::ok(Message::Response {
-                            result: Err(Value::String(Utf8String::from(format!("unknown method {}", method).as_str()))),
-                            id: 0
-                        }),
-                    }
-                }
-                _ => unimplemented!()
-            }
-        )
+    fn handle_request(
+        &mut self,
+        request: &Request,
+    ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error> {
+        Box::new(match request.method.as_str() {
+            "hello" => future::ok(Ok("hello")),
+            "world" => future::ok(Ok("world")),
+            method => future::ok(Err(format!("unknown method {}", method))),
+        })
+    }
+
+    fn handle_notification(&mut self, _notification: &Notification) -> BoxFuture<(), Self::Error> {
+        unimplemented!();
     }
 }
 
 fn main() {
-    let addr = "127.0.0.1:54321".parse().unwrap();
+    env_logger::init().unwrap();
+    let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
 
-    thread::spawn(move || {
-        serve(addr, HelloWorld)
-    });
-
+    thread::spawn(move || serve(&addr, HelloWorld));
     thread::sleep(Duration::from_millis(100));
 
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
-    core.run(
+    let _ = core.run(
         Client::connect(&addr, &handle)
+            .or_else(|e| {
+                println!("Connection to server failed: {}", e);
+                Err(())
+            })
             .and_then(|client| {
-                client.request("hello", vec![])
-                    .and_then(move |response| {
-                        println!("client: {:?}", response);
-                        client.request("world", vec![])
+                client.request("hello", &[]).and_then(|response| {
+                    println!("{:?}", response);
+                    client.request("dummy", &[]).and_then(|response| {
+                        println!("{:?}", response);
+                        Ok(client)
                     })
-                    .and_then(|response| {
-                        println!("client: {:?}", response);
-                        Ok(())
-                    })
-            })).unwrap();
+                })
+            })
+            .and_then(|client| {
+                client.request("world", &[]).and_then(|response| {
+                    println!("{:?}", response);
+                    Ok(())
+                })
+            }),
+    );
 }

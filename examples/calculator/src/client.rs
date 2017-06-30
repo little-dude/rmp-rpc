@@ -1,54 +1,70 @@
 use std::net::SocketAddr;
-use rmp_rpc::{self, Value, Integer};
+use rmp_rpc;
+use rmpv::{Value, Integer};
 use futures::Future;
 use tokio_core::reactor::Handle;
-use std::{fmt, io, error};
+use std::{fmt, error};
 
 pub type Response = Box<Future<Item = i64, Error = RpcError>>;
 
-pub struct Client(rmp_rpc::Client);
+pub struct Client(rmp_rpc::client::Client);
 
 impl Client {
-    pub fn connect(addr: &SocketAddr,
-                   handle: &Handle)
-                   -> Box<Future<Item = Self, Error = RpcError>> {
-        let client = rmp_rpc::Client::connect(addr, handle)
+    pub fn connect(
+        addr: &SocketAddr,
+        handle: &Handle,
+    ) -> Box<Future<Item = Self, Error = RpcError>> {
+        let client = rmp_rpc::client::Client::connect(addr, handle)
             .map(Client)
-            .map_err(|err| From::from(err));
+            .map_err(|_| ())
+            .map_err(From::from);
         Box::new(client)
     }
 
     pub fn add(&self, values: &[i64]) -> Response {
-        let params = values.iter().map(|v| Value::Integer(Integer::from(*v))).collect();
-        self.call("add", params)
+        let params = values
+            .iter()
+            .map(|v| Value::Integer(Integer::from(*v)))
+            .collect();
+        self.request("add", params)
     }
 
     pub fn sub(&self, values: &[i64]) -> Response {
-        let params = values.iter().map(|v| Value::Integer(Integer::from(*v))).collect();
-        self.call("sub", params)
+        let params = values
+            .iter()
+            .map(|v| Value::Integer(Integer::from(*v)))
+            .collect();
+        self.request("sub", params)
     }
 
     pub fn res(&self) -> Response {
-        self.call("res", vec![])
+        self.request("res", vec![])
     }
 
     pub fn clear(&self) -> Response {
-        self.call("clear", vec![])
+        self.request("clear", vec![])
     }
 
-    fn call(&self, method: &str, params: Vec<Value>) -> Response {
-        Box::new(self.0.request(method, params).then(|response| parse_response(response)))
+    fn request(&self, method: &str, params: Vec<Value>) -> Response {
+        Box::new(self.0.request(method, &params).then(parse_response))
     }
 }
 
-fn parse_response(response: Result<Result<Value, Value>, io::Error>) -> Result<i64, RpcError> {
+fn parse_response(response: Result<Result<Value, Value>, ()>) -> Result<i64, RpcError> {
     match response? {
         Ok(result) => {
             if let Value::Integer(int) = result {
-                int.as_i64().ok_or(RpcError::Client(format!("Could not parse server response as \
-                                                             an integer")))
+                int.as_i64().ok_or_else(|| {
+                    RpcError::Client(
+                        "Could not parse server response as \
+                         an integer"
+                            .to_string(),
+                    )
+                })
             } else {
-                Err(RpcError::Client(format!("Could not parse server response as an integer")))
+                Err(RpcError::Client(
+                    "Could not parse server response as an integer".to_string(),
+                ))
             }
         }
         Err(error) => {
@@ -56,12 +72,17 @@ fn parse_response(response: Result<Result<Value, Value>, io::Error>) -> Result<i
                 match s.as_str() {
                     Some(error_str) => Err(RpcError::Server(error_str.to_string())),
                     None => {
-                        Err(RpcError::Client(format!("Could not parse server response as a \
-                                                      string")))
+                        Err(RpcError::Client(
+                            "Could not parse server response as a \
+                             string"
+                                .to_string(),
+                        ))
                     }
                 }
             } else {
-                Err(RpcError::Client(format!("Could not parse server response as a string")))
+                Err(RpcError::Client(
+                    "Could not parse server response as a string".to_string(),
+                ))
             }
         }
     }
@@ -69,8 +90,7 @@ fn parse_response(response: Result<Result<Value, Value>, io::Error>) -> Result<i
 
 #[derive(Debug)]
 pub enum RpcError {
-    /// IO error that occured while communicating with the server.
-    Io(io::Error),
+    Other,
     /// Error returned by the server upon a request.
     Server(String),
     /// Error while processing the server response.
@@ -80,11 +100,7 @@ pub enum RpcError {
 impl fmt::Display for RpcError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            RpcError::Io(ref err) => {
-                write!(f,
-                       "an IO error occured while communicating with the server: {}",
-                       err)
-            }
+            RpcError::Other => write!(f, "unknown error"),
             RpcError::Server(ref msg) => write!(f, "the server returned an error: {}", msg),
             RpcError::Client(ref msg) => {
                 write!(f, "failed to process the server response (reason: {})", msg)
@@ -96,22 +112,19 @@ impl fmt::Display for RpcError {
 impl error::Error for RpcError {
     fn description(&self) -> &str {
         match *self {
-            RpcError::Io(_) => "an IO error occured while communicating with the server",
+            RpcError::Other => "unknown error",
             RpcError::Server(_) => "the server returned an error",
             RpcError::Client(_) => "failed to process the server response",
         }
     }
 
     fn cause(&self) -> Option<&error::Error> {
-        match *self {
-            RpcError::Io(ref e) => Some(e),
-            _ => None,
-        }
+        None
     }
 }
 
-impl From<io::Error> for RpcError {
-    fn from(err: io::Error) -> RpcError {
-        RpcError::Io(err)
+impl From<()> for RpcError {
+    fn from(_: ()) -> RpcError {
+        RpcError::Other
     }
 }

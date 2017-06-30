@@ -1,32 +1,35 @@
 extern crate futures;
 extern crate tokio_core;
-extern crate tokio_proto;
-extern crate tokio_service;
 extern crate rmp_rpc;
+extern crate rmpv;
 
 mod client;
 mod server;
 
-use client::Client;
-use server::Calculator;
-use tokio_core::reactor::Core;
-use futures::Future;
+use std::net::SocketAddr;
 use std::thread;
 use std::time::Duration;
 
+use futures::Future;
+use rmp_rpc::server::serve;
+use tokio_core::reactor::Core;
+
+use client::Client;
+use server::Calculator;
+
 fn main() {
 
-    let addr = "127.0.0.1:54321".parse().unwrap();
+    let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
 
-    thread::spawn(move || rmp_rpc::serve(addr, Calculator::new()));
-
+    thread::spawn(move || serve(&addr, Calculator::new()));
     thread::sleep(Duration::from_millis(100));
 
     let mut reactor = Core::new().expect("Failed to start even loop");
     let client_future = Client::connect(&addr, &reactor.handle())
         .and_then(|client| {
             println!("connected");
-            client.add(&vec![1, 2, 3])
+            client
+                .add(&[1, 2, 3])
                 .and_then(|result| {
                     println!("{}", result);
                     Ok(client)
@@ -37,7 +40,8 @@ fn main() {
                 })
         })
         .and_then(|client| {
-            client.sub(&vec![1])
+            client
+                .sub(&[1])
                 .and_then(|result| {
                     println!("{}", result);
                     Ok(client)
@@ -48,7 +52,8 @@ fn main() {
                 })
         })
         .and_then(|client| {
-            client.res()
+            client
+                .res()
                 .and_then(|result| {
                     println!("{}", result);
                     Ok(client)
@@ -59,7 +64,8 @@ fn main() {
                 })
         })
         .and_then(|client| {
-            client.clear()
+            client
+                .clear()
                 .and_then(|result| {
                     println!("{}", result);
                     Ok(client)

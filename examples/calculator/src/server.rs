@@ -1,13 +1,10 @@
 use std::sync::{Arc, Mutex};
 use std::io;
-use rmp_rpc::{Message, Value, Utf8String, Integer};
-use futures::{future, Future};
-use tokio_service::{Service, NewService};
 
-fn argument_error() -> Value {
-    Value::String(Utf8String::from("Invalid arguments"))
-}
-
+use futures::{future, BoxFuture};
+use rmp_rpc::{Request, Notification};
+use rmp_rpc::server::{ServiceBuilder, Service};
+use rmpv::Value;
 
 #[derive(Clone)]
 pub struct Calculator {
@@ -19,82 +16,78 @@ impl Calculator {
         Calculator { value: Arc::new(Mutex::new(0)) }
     }
 
-    fn parse_args(params: &[Value]) -> Result<Vec<i64>, Value> {
+    fn parse_args(params: &[Value]) -> Result<Vec<i64>, &'static str> {
         let mut ret = vec![];
         for value in params {
             let int = if let Value::Integer(int) = *value {
-                int.as_i64().ok_or(argument_error())?
+                int.as_i64().ok_or("Invalid arguments")?
             } else {
-                return Err(argument_error());
+                return Err("Invalid arguments");
             };
             ret.push(int);
         }
         Ok(ret)
     }
 
-    fn clear(&self) -> Result<Value, Value> {
+    fn clear(&self) -> Result<i64, &'static str> {
         println!("server: clear");
         let mut value = self.value.lock().unwrap();
         *value = 0;
-        Ok(Value::Integer(Integer::from(*value)))
+        Ok(*value)
     }
 
-    fn res(&self) -> Result<Value, Value> {
+    fn res(&self) -> Result<i64, &'static str> {
         println!("server: res");
-        Ok(Value::Integer(Integer::from(*self.value.lock().unwrap())))
+        Ok(*self.value.lock().unwrap())
     }
 
-    fn add(&self, params: &[Value]) -> Result<Value, Value> {
+    fn add(&self, params: &[Value]) -> Result<i64, &'static str> {
         println!("server: add");
         let mut value = self.value.lock().unwrap();
-        *value += Self::parse_args(params)?.iter().fold(0, |acc, &int| acc + int);
-        Ok(Value::Integer(Integer::from(*value)))
+        *value += Self::parse_args(params)?
+            .iter()
+            .fold(0, |acc, &int| acc + int);
+        Ok(*value)
     }
 
-    fn sub(&self, params: &[Value]) -> Result<Value, Value> {
+    fn sub(&self, params: &[Value]) -> Result<i64, &'static str> {
         println!("server: sub");
         let mut value = self.value.lock().unwrap();
-        *value -= Self::parse_args(params)?.iter().fold(0, |acc, &int| acc + int);
-        Ok(Value::Integer(Integer::from(*value)))
+        *value -= Self::parse_args(params)?
+            .iter()
+            .fold(0, |acc, &int| acc + int);
+        Ok(*value)
     }
 }
 
 impl Service for Calculator {
-    type Request = Message;
-    type Response = Message;
+    type T = i64;
+    type E = String;
     type Error = io::Error;
-    type Future = Box<Future<Item = Message, Error = io::Error>>;
 
-    fn call(&self, msg: Message) -> Self::Future {
-        let res = match msg {
-            Message::Request { method, params, .. } => {
-                match method.as_str() {
-                    "add" | "+" => self.add(&params),
-                    "sub" | "-" => self.sub(&params),
-                    "res" | "=" => self.res(),
-                    "clear" => self.clear(),
-                    method => {
-                        Err(Value::String(Utf8String::from(format!("Invalid method {}", method))))
-                    }
-                }
-            }
-            _ => unimplemented!(),
+    fn handle_request(
+        &mut self,
+        request: &Request,
+    ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error> {
+        let res = match request.method.as_str() {
+            "add" | "+" => self.add(&request.params).map_err(|e| e.to_string()),
+            "sub" | "-" => self.sub(&request.params).map_err(|e| e.to_string()),
+            "res" | "=" => self.res().map_err(|e| e.to_string()),
+            "clear" => self.clear().map_err(|e| e.to_string()),
+            method => Err(format!("Invalid method {}", method)),
         };
-        Box::new(future::ok(Message::Response {
-            result: res,
-            id: 0,
-        }))
+        Box::new(future::ok(res))
+    }
+    fn handle_notification(&mut self, _notification: &Notification) -> BoxFuture<(), Self::Error> {
+        unimplemented!();
     }
 }
 
-impl NewService for Calculator {
-    type Request = Message;
-    type Response = Message;
-    type Error = io::Error;
-    type Instance = Calculator;
+impl ServiceBuilder for Calculator {
+    type Service = Calculator;
 
-    fn new_service(&self) -> io::Result<Self::Instance> {
-        println!("server: new_service called.");
-        Ok(self.clone())
+    fn build(&self) -> Self::Service {
+        println!("server: calculator service called.");
+        self.clone()
     }
 }
