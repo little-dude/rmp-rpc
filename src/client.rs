@@ -1,4 +1,57 @@
-///! This module provides a `MessagePack-RPC` asynchronous client.
+//! This module provides a `MessagePack-RPC` asynchronous client.
+//!
+//! # Examples
+//!
+//! ```rust,no_run
+//! extern crate futures;
+//! extern crate rmp_rpc;
+//! extern crate tokio_core;
+//!
+//! use std::net::SocketAddr;
+//!
+//! use futures::Future;
+//! use rmp_rpc::{Value, Integer};
+//! use rmp_rpc::client::Client;
+//! use tokio_core::reactor::Core;
+//!
+//! fn main() {
+//!    // Create the tokio event loop
+//!    let mut core = Core::new().unwrap();
+//!    let handle = core.handle();
+//!
+//!    let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
+//!
+//!    let task =
+//!        // Connect to the server
+//!        Client::connect(&addr, &handle)
+//!        .or_else(|e| {
+//!            println!("Connection to server failed: {}", e);
+//!            Err(())
+//!        })
+//!        .and_then(|client| {
+//!            // Send a msgpack-rpc notification, with method "ping" and no argument
+//!            client.notify("ping", &[]).and_then(|_| {
+//!                // Return the client, so that we can reuse it
+//!                Ok(client)
+//!            })
+//!        })
+//!        .and_then(|client| {
+//!            // Send a msgpack-rpc request, with method "add" and two arguments
+//!            let args = vec![Value::Integer(Integer::from(3)),
+//!                            Value::Integer(Integer::from(4))];
+//!            client.request("add", &args).and_then(|response| {
+//!                // Handle the response [...]
+//!                Ok(())
+//!            })
+//!        });
+//!    core.run(task).unwrap();
+//! }
+//! ```
+
+// HACK: we want to re-export ClientProxy as Client in this module, so we put everything in this
+// dummy private module, and use a `pub use` to export what's public
+pub use self::private::ClientProxy as Client;
+pub use self::private::{Response, Connection};
 
 mod private {
     use tokio_core::net::TcpStream;
@@ -45,53 +98,6 @@ mod private {
 
     /// A client used to send requests on notifications to a `MessagePack-RPC` server.
     ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// extern crate futures;
-    /// extern crate rmp_rpc;
-    /// extern crate tokio_core;
-    ///
-    /// use std::net::SocketAddr;
-    ///
-    /// use futures::Future;
-    /// use rmp_rpc::{Value, Integer};
-    /// use rmp_rpc::client::Client;
-    /// use tokio_core::reactor::Core;
-    ///
-    /// fn main() {
-    ///    // Create the tokio event loop
-    ///    let mut core = Core::new().unwrap();
-    ///    let handle = core.handle();
-    ///
-    ///    let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
-    ///
-    ///    let task =
-    ///        // Connect to the server
-    ///        Client::connect(&addr, &handle)
-    ///        .or_else(|e| {
-    ///            println!("Connection to server failed: {}", e);
-    ///            Err(())
-    ///        })
-    ///        .and_then(|client| {
-    ///            // Send a msgpack-rpc notification, with method "ping" and no argument
-    ///            client.notify("ping", &[]).and_then(|_| {
-    ///                // Return the client, so that we can reuse it
-    ///                Ok(client)
-    ///            })
-    ///        })
-    ///        .and_then(|client| {
-    ///            // Send a msgpack-rpc request, with method "add" and two arguments
-    ///            let args = vec![
-    ///                Value::Integer(Integer::from(3)), Value::Integer(Integer::from(4))];
-    ///            client.request("add", &args).and_then(|response| {
-    ///                // Handle the response [...]
-    ///                Ok(())
-    ///            })
-    ///        });
-    ///    core.run(task).unwrap();
-    /// }
-    /// ```
     pub struct ClientProxy {
         requests_tx: mpsc::UnboundedSender<(Request, oneshot::Sender<Result<Value, Value>>)>,
         notifications_tx: mpsc::UnboundedSender<(Notification, oneshot::Sender<()>)>,
@@ -411,6 +417,3 @@ mod private {
         }
     }
 }
-
-pub use self::private::ClientProxy as Client;
-pub use self::private::{Response, Connection};
