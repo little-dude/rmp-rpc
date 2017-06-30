@@ -58,15 +58,15 @@ mod private {
     /// use rmp_rpc::{Value, Integer};
     /// use rmp_rpc::client::Client;
     /// use tokio_core::reactor::Core;
-    /// 
+    ///
     /// fn main() {
     ///    // Create the tokio event loop
     ///    let mut core = Core::new().unwrap();
     ///    let handle = core.handle();
-    ///    
+    ///
     ///    let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
-    ///    
-    ///    let task = 
+    ///
+    ///    let task =
     ///        // Connect to the server
     ///        Client::connect(&addr, &handle)
     ///        .or_else(|e| {
@@ -124,7 +124,8 @@ mod private {
             trace!(
                 "ClientProxy: new request (method={}, params={:?})",
                 method,
-                params);
+                params
+            );
             let request = Request {
                 id: 0,
                 method: method.to_owned(),
@@ -144,7 +145,8 @@ mod private {
             trace!(
                 "ClientProxy: new notification (method={}, params={:?})",
                 method,
-                params);
+                params
+            );
             let notification = Notification {
                 method: method.to_owned(),
                 params: Vec::from(params),
@@ -192,13 +194,13 @@ mod private {
                         pending_notifications: Vec::new(),
                     }
                 })
-            .or_else(|e| {
-                error!("ClientProxy: connection failed: {}", e);
-                if let Err(e) = error_tx.send(e) {
-                    panic!("Failed to send client proxy to connection: {:?}", e);
-                }
-                Err(())
-            });
+                .or_else(|e| {
+                    error!("ClientProxy: connection failed: {}", e);
+                    if let Err(e) = error_tx.send(e) {
+                        panic!("Failed to send client proxy to connection: {:?}", e);
+                    }
+                    Err(())
+                });
 
             trace!("Spawning Client and returning Connection");
             handle.spawn(client);
@@ -266,21 +268,23 @@ mod private {
         fn handle_msg(&mut self, msg: Message) {
             match msg {
                 Message::Request(_) |
-                    Message::Notification(_) => {
-                        trace!("Client: got a request or notification from server. Ignoring it.");
-                    }
+                Message::Notification(_) => {
+                    trace!("Client: got a request or notification from server. Ignoring it.");
+                }
                 Message::Response(response) => {
                     if let Some(response_sender) = self.pending_requests.remove(&response.id) {
                         trace!(
                             "Client: got a response from server: {:?}, \
-                         and found the corresponding pending request.",
-                         response);
+                             and found the corresponding pending request.",
+                            response
+                        );
                         response_sender.send(response.result).unwrap();
                     } else {
                         trace!(
                             "Client: got a response from server: {:?}, \
-                         but no corresponding pending request. Ignoring it.",
-                         response);
+                             but no corresponding pending request. Ignoring it.",
+                            response
+                        );
                     }
                 }
             }
@@ -292,7 +296,8 @@ mod private {
                     Async::Ready(Some((notification, ack_sender))) => {
                         trace!(
                             "Client: received notification from ClientProxy. \
-                         Forwarding it to the server.");
+                             Forwarding it to the server."
+                        );
                         let send_task = self.stream
                             .start_send(Message::Notification(notification))
                             .unwrap();
@@ -303,8 +308,9 @@ mod private {
                     }
                     Async::Ready(None) => {
                         trace!(
-                            "Client: ClientProxy closed the remote end of the notifications channel. \
-                         Entering shutdown state.");
+                            "Client: ClientProxy closed the remote end of the notifications \
+                             channel. Entering shutdown state."
+                        );
                         self.shutdown = true;
                         return;
                     }
@@ -320,8 +326,9 @@ mod private {
                         self.request_id += 1;
                         trace!(
                             "Client: received request from ClientProxy. \
-                         Forwarding it to the server with id {}.",
-                         self.request_id);
+                             Forwarding it to the server with id {}.",
+                            self.request_id
+                        );
                         request.id = self.request_id;
                         let send_task = self.stream.start_send(Message::Request(request)).unwrap();
                         if !send_task.is_ready() {
@@ -333,7 +340,8 @@ mod private {
                     Async::Ready(None) => {
                         trace!(
                             "Client: ClientProxy closed the remote end of the requests channel. \
-                         Entering shutdown state.");
+                             Entering shutdown state."
+                        );
                         self.shutdown = true;
                         return;
                     }
@@ -345,7 +353,9 @@ mod private {
         fn flush(&mut self) {
             if self.stream.poll_complete().unwrap().is_ready() {
                 for ack_sender in self.pending_notifications.drain(..) {
-                    trace!("Client: letting ClientProxy know that pending notification has been sent");
+                    trace!(
+                        "Client: letting ClientProxy know that pending notification has been sent"
+                    );
                     ack_sender.send(()).unwrap();
                 }
             }
@@ -361,7 +371,9 @@ mod private {
                 match self.stream.poll().unwrap() {
                     Async::Ready(Some(msg)) => self.handle_msg(msg),
                     Async::Ready(None) => {
-                        trace!("Client: stream with server has been closed. Terminating successfully");
+                        trace!(
+                            "Client: stream with server has been closed. Terminating successfully"
+                        );
                         return Ok(Async::Ready(()));
                     }
                     Async::NotReady => break,
@@ -371,14 +383,14 @@ mod private {
                 if self.pending_requests.is_empty() {
                     trace!(
                         "Client: all pending requests have been processed. \
-                     Terminating successfully"
-                     );
+                         Terminating successfully"
+                    );
                     Ok(Async::Ready(()))
                 } else {
                     trace!(
                         "Client: not all pending requests have been processed. \
-                     Waiting before terminating"
-                     );
+                         Waiting before terminating"
+                    );
                     Ok(Async::NotReady)
                 }
             } else {

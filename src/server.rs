@@ -9,7 +9,7 @@
 ///!
 ///! use std::io;
 ///! use std::net::SocketAddr;
-///! 
+///!
 ///! use futures::{future, BoxFuture};
 ///! use rmp_rpc::{Request, Notification};
 ///! use rmp_rpc::server::{Service, ServiceBuilder, serve};
@@ -24,7 +24,7 @@
 ///!     type Error = io::Error;
 ///!     type T = &'static str;
 ///!     type E = String;
-///! 
+///!
 ///!     fn handle_request(&mut self, request: &Request) -> BoxFuture<Result<Self::T, Self::E>, Self::Error> {
 ///!         Box::new(match request.method.as_str() {
 ///!             // return "world" if the request's method is "hello"
@@ -33,7 +33,7 @@
 ///!             method => future::ok(Err(format!("unknown method {}", method))),
 ///!         })
 ///!     }
-///! 
+///!
 ///!     fn handle_notification(&mut self, notification: &Notification) -> BoxFuture<(), Self::Error> {
 ///!         // just pring the notification's method name
 ///!         Box::new(future::ok(println!("{}", notification.method.as_str())))
@@ -45,7 +45,7 @@
 ///! // itself, but it could be any other type.
 ///! impl ServiceBuilder for ExampleServer {
 ///!     type Service = ExampleServer;
-///! 
+///!
 ///!     fn build(&self) -> Self::Service { self.clone() }
 ///! }
 ///!
@@ -86,8 +86,8 @@ pub trait Service {
     fn handle_notification(&mut self, notification: &Notification) -> BoxFuture<(), Self::Error>;
 }
 
-/// Since a new `Service` is created for each client, it is necessary to have a builder type that implements
-/// the `ServiceBuilder` trait.
+/// Since a new `Service` is created for each client, it is necessary to have a builder type that
+/// implements the `ServiceBuilder` trait.
 pub trait ServiceBuilder {
     type Service: Service + 'static;
 
