@@ -2,7 +2,6 @@ use std::sync::{Arc, Mutex};
 use std::io;
 
 use futures::{future, BoxFuture};
-use rmp_rpc::{Request, Notification};
 use rmp_rpc::server::{ServiceBuilder, Service};
 use rmpv::Value;
 
@@ -67,18 +66,23 @@ impl Service for Calculator {
 
     fn handle_request(
         &mut self,
-        request: &Request,
+        method: &str,
+        params: &[Value],
     ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error> {
-        let res = match request.method.as_str() {
-            "add" | "+" => self.add(&request.params).map_err(|e| e.to_string()),
-            "sub" | "-" => self.sub(&request.params).map_err(|e| e.to_string()),
+        let res = match method {
+            "add" | "+" => self.add(params).map_err(|e| e.to_string()),
+            "sub" | "-" => self.sub(params).map_err(|e| e.to_string()),
             "res" | "=" => self.res().map_err(|e| e.to_string()),
             "clear" => self.clear().map_err(|e| e.to_string()),
             method => Err(format!("Invalid method {}", method)),
         };
         Box::new(future::ok(res))
     }
-    fn handle_notification(&mut self, _notification: &Notification) -> BoxFuture<(), Self::Error> {
+    fn handle_notification(
+        &mut self,
+        _method: &str,
+        _params: &[Value],
+    ) -> BoxFuture<(), Self::Error> {
         unimplemented!();
     }
 }
