@@ -61,7 +61,7 @@ use std::error::Error;
 use std::net::SocketAddr;
 
 use codec::Codec;
-use message::{Response, Request, Notification, Message};
+use message::{Response, Message};
 
 use futures::{Async, Poll, Future, Stream, Sink, BoxFuture};
 use rmpv::Value;
@@ -79,11 +79,16 @@ pub trait Service {
     /// Handle a `MessagePack-RPC` request
     fn handle_request(
         &mut self,
-        request: &Request,
+        method: &str,
+        params: &[Value],
     ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error>;
 
     /// Handle a `MessagePack-RPC` notification
-    fn handle_notification(&mut self, notification: &Notification) -> BoxFuture<(), Self::Error>;
+    fn handle_notification(
+        &mut self,
+        method: &str,
+        params: &[Value],
+    ) -> BoxFuture<(), Self::Error>;
 }
 
 /// Since a new `Service` is created for each client, it is necessary to have a builder type that
@@ -119,11 +124,15 @@ where
     fn handle_msg(&mut self, msg: Message) {
         match msg {
             Message::Request(request) => {
-                let response = self.service.handle_request(&request);
+                let method = request.method.as_str();
+                let params = request.params;
+                let response = self.service.handle_request(method, &params);
                 self.request_tasks.insert(request.id, response);
             }
             Message::Notification(notification) => {
-                let outcome = self.service.handle_notification(&notification);
+                let method = notification.method.as_str();
+                let params = notification.params;
+                let outcome = self.service.handle_notification(method, &params);
                 self.notification_tasks.push(outcome);
             }
             Message::Response(_) => {
