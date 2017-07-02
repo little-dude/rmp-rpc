@@ -21,5 +21,4 @@ mod message;
 pub mod server;
 pub mod client;
 
-pub use message::{Request, Response, Notification, Message};
 pub use rmpv::{Value, Integer, Utf8String};
