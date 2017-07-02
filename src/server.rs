@@ -84,11 +84,8 @@ pub trait Service {
     ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error>;
 
     /// Handle a `MessagePack-RPC` notification
-    fn handle_notification(
-        &mut self,
-        method: &str,
-        params: &[Value],
-    ) -> BoxFuture<(), Self::Error>;
+    fn handle_notification(&mut self, method: &str, params: &[Value])
+        -> BoxFuture<(), Self::Error>;
 }
 
 /// Since a new `Service` is created for each client, it is necessary to have a builder type that

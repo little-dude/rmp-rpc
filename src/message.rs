@@ -42,8 +42,30 @@ const RESPONSE_MESSAGE: u64 = 1;
 const NOTIFICATION_MESSAGE: u64 = 2;
 
 impl Message {
-    fn decode_notification(_array: &[Value]) -> Result<Notification, DecodeError> {
-        unimplemented!();
+    fn decode_notification(array: &[Value]) -> Result<Notification, DecodeError> {
+        if array.len() < 3 {
+            return Err(DecodeError::Invalid);
+        }
+
+        let method = if let Value::String(ref method) = array[1] {
+            method
+                .as_str()
+                .and_then(|s| Some(s.to_string()))
+                .ok_or(DecodeError::Invalid)?
+        } else {
+            return Err(DecodeError::Invalid);
+        };
+
+        let params = if let Value::Array(ref params) = array[2] {
+            params.clone()
+        } else {
+            return Err(DecodeError::Invalid);
+        };
+
+        Ok(Notification {
+            method: method,
+            params: params,
+        })
     }
 
     fn decode_response(array: &[Value]) -> Result<Response, DecodeError> {
