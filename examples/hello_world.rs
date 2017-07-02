@@ -48,7 +48,10 @@ impl Service for HelloWorld {
         }
 
         if params.len() != 1 {
-            return box_ok(Err(format!("Expected 1 argument for method \"hello\", got {}", params.len())));
+            return box_ok(Err(format!(
+                "Expected 1 argument for method \"hello\", got {}",
+                params.len()
+            )));
         }
 
         if let Value::String(ref string) = params[0] {
@@ -86,12 +89,14 @@ fn main() {
                 Err(())
             })
             .and_then(|client| {
-                client.request("hello", &["little-dude".into()]).and_then(|response| {
-                    println!("{:?}", response);
-                    client.notify("this should be printed :)", &[]).and_then(|_| {
-                        Ok(client)
-                    })
-                })
+                client.request("hello", &["little-dude".into()]).and_then(
+                    |response| {
+                        println!("{:?}", response);
+                        client
+                            .notify("this should be printed :)", &[])
+                            .and_then(|_| Ok(client))
+                    },
+                )
             })
             .and_then(|client| {
                 client.request("dummy", &[]).and_then(|response| {
