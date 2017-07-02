@@ -1,3 +1,4 @@
+//! In this example
 extern crate futures;
 extern crate tokio_core;
 extern crate rmp_rpc;
@@ -7,9 +8,10 @@ extern crate env_logger;
 
 use rmp_rpc::client::Client;
 use rmp_rpc::server::{ServiceBuilder, Service, serve};
-use rmp_rpc::{Request, Notification};
+use rmp_rpc::Value;
 
 use tokio_core::reactor::Core;
+use std::marker::Send;
 use std::{io, thread};
 use std::time::Duration;
 use std::net::SocketAddr;
@@ -27,24 +29,43 @@ impl ServiceBuilder for HelloWorld {
     }
 }
 
+fn box_ok<T: Send + 'static, E: Send + 'static>(t: T) -> BoxFuture<T, E> {
+    Box::new(future::ok(t))
+}
+
 impl Service for HelloWorld {
     type Error = io::Error;
-    type T = &'static str;
+    type T = String;
     type E = String;
 
     fn handle_request(
         &mut self,
-        request: &Request,
+        method: &str,
+        params: &[Value],
     ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error> {
-        Box::new(match request.method.as_str() {
-            "hello" => future::ok(Ok("hello")),
-            "world" => future::ok(Ok("world")),
-            method => future::ok(Err(format!("unknown method {}", method))),
-        })
+        if method != "hello" {
+            return box_ok(Err(format!("Uknown method {}", method)));
+        }
+
+        if params.len() != 1 {
+            return box_ok(Err(format!("Expected 1 argument for method \"hello\", got {}", params.len())));
+        }
+
+        if let Value::String(ref string) = params[0] {
+            if let Some(name) = string.as_str() {
+                return box_ok(Ok(format!("hello {}", name)));
+            }
+        }
+        box_ok(Err("Invalid argument".into()))
     }
 
-    fn handle_notification(&mut self, _notification: &Notification) -> BoxFuture<(), Self::Error> {
-        unimplemented!();
+    fn handle_notification(
+        &mut self,
+        method: &str,
+        _params: &[Value],
+    ) -> BoxFuture<(), Self::Error> {
+        // just pring the notification's method name
+        box_ok(println!("{}", method))
     }
 }
 
@@ -65,16 +86,15 @@ fn main() {
                 Err(())
             })
             .and_then(|client| {
-                client.request("hello", &[]).and_then(|response| {
+                client.request("hello", &["little-dude".into()]).and_then(|response| {
                     println!("{:?}", response);
-                    client.request("dummy", &[]).and_then(|response| {
-                        println!("{:?}", response);
+                    client.notify("this should be printed :)", &[]).and_then(|_| {
                         Ok(client)
                     })
                 })
             })
             .and_then(|client| {
-                client.request("world", &[]).and_then(|response| {
+                client.request("dummy", &[]).and_then(|response| {
                     println!("{:?}", response);
                     Ok(())
                 })
