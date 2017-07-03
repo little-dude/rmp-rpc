@@ -1,4 +1,5 @@
 use std::io;
+use rmpv;
 use bytes::{BytesMut, BufMut};
 use tokio_io::codec::{Encoder, Decoder};
 use errors::DecodeError;
@@ -22,12 +23,8 @@ impl Decoder for Codec {
                     }
                     Err(err) => {
                         match err {
-                            DecodeError::Truncated => {
-                                return Ok(None);
-                            }
-                            DecodeError::Malformed | DecodeError::Invalid => {
-                                continue;
-                            }
+                            DecodeError::Truncated => return Ok(None),
+                            DecodeError::Invalid => continue,
                             DecodeError::UnknownIo(io_err) => {
                                 res = Err(io_err);
                                 break;
@@ -48,10 +45,10 @@ impl Encoder for Codec {
     type Error = io::Error;
 
     fn encode(&mut self, msg: Self::Item, buf: &mut BytesMut) -> io::Result<()> {
-        let data = msg.pack();
-        buf.reserve(data.len());
-        buf.put_slice(&data);
-        Ok(())
+        Ok(rmpv::encode::write_value(
+            &mut buf.writer(),
+            &msg.as_value(),
+        )?)
     }
 }
 

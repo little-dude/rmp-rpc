@@ -1,39 +1,16 @@
 use std::{error, fmt, io};
-use rmpv::{encode, decode};
-
-pub struct EncodeError(io::Error);
-
-impl From<encode::Error> for EncodeError {
-    fn from(err: encode::Error) -> EncodeError {
-        match err {
-            encode::Error::InvalidMarkerWrite(io_err) |
-            encode::Error::InvalidDataWrite(io_err) => EncodeError(io_err),
-        }
-    }
-}
-
-impl From<EncodeError> for io::Error {
-    fn from(err: EncodeError) -> io::Error {
-        err.0
-    }
-}
-
+use rmpv::decode;
 
 /// Error while decoding a sequence of bytes into a `MessagePack-RPC` message
 #[derive(Debug)]
 pub enum DecodeError {
     /// Some bytes are missing to decode a full msgpack value
     Truncated,
-
-    /// A byte sequence could no be decoded as a msgpack value
-    Malformed,
-
-    /// An unknown IO error while reading a byte sequence
-    UnknownIo(io::Error),
-
-    /// A byte sequence could be decoded as a msgpack value, but this value is not a valid
+    /// A byte sequence could not be decoded as a msgpack value, or this value is not a valid
     /// msgpack-rpc message.
     Invalid,
+    /// An unknown IO error while reading a byte sequence
+    UnknownIo(io::Error),
 }
 
 impl fmt::Display for DecodeError {
@@ -42,16 +19,12 @@ impl fmt::Display for DecodeError {
     }
 }
 
-
 impl error::Error for DecodeError {
     fn description(&self) -> &str {
         match *self {
             DecodeError::Truncated => "could not read enough bytes to decode a complete message",
             DecodeError::UnknownIo(_) => "Unknown IO error while decoding a message",
-            DecodeError::Invalid => {
-                "the message could be decoded but is not a valid msgpack-rpc message"
-            }
-            DecodeError::Malformed => "A byte sequence could no be decoded as a msgpack value",
+            DecodeError::Invalid => "the byte sequence is not a valid msgpack-rpc message",
         }
     }
 
@@ -70,7 +43,7 @@ impl From<io::Error> for DecodeError {
             io::ErrorKind::Other => {
                 if let Some(cause) = err.get_ref().unwrap().cause() {
                     if cause.description() == "type mismatch" {
-                        return DecodeError::Malformed;
+                        return DecodeError::Invalid;
                     }
                 }
                 DecodeError::UnknownIo(err)
