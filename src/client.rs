@@ -159,13 +159,13 @@ impl Client {
     /// Connect the client to a remote `MessagePack-RPC` server.
     pub fn connect(addr: &SocketAddr, handle: &Handle) -> Connection {
         trace!("Client: trying to connect to {}", addr);
-        let (client_proxy_tx, client_proxy_rx) = oneshot::channel();
+        let (client_tx, client_rx) = oneshot::channel();
         let (error_tx, error_rx) = oneshot::channel();
 
         let connection = Connection {
-            client_proxy_rx: client_proxy_rx,
+            client_rx: client_rx,
             error_rx: error_rx,
-            client_proxy_chan_cancelled: false,
+            client_chan_cancelled: false,
             error_chan_cancelled: false,
         };
 
@@ -175,13 +175,13 @@ impl Client {
                 let (requests_tx, requests_rx) = mpsc::unbounded();
                 let (notifications_tx, notifications_rx) = mpsc::unbounded();
 
-                let client_proxy = Client {
+                let client = Client {
                     requests_tx: requests_tx,
                     notifications_tx: notifications_tx,
                 };
 
-                if client_proxy_tx.send(client_proxy).is_err() {
-                    panic!("Failed to send client proxy to connection");
+                if client_tx.send(client).is_err() {
+                    panic!("Failed to send client to connection");
                 }
 
                 Endpoint {
@@ -197,7 +197,7 @@ impl Client {
         .or_else(|e| {
             error!("Client: connection failed: {}", e);
             if let Err(e) = error_tx.send(e) {
-                panic!("Failed to send client proxy to connection: {:?}", e);
+                panic!("Failed to send client to connection: {:?}", e);
             }
             Err(())
         });
@@ -210,8 +210,8 @@ impl Client {
 
 /// A future that returns a `Endpoint` when it completes successfully.
 pub struct Connection {
-    client_proxy_rx: oneshot::Receiver<Client>,
-    client_proxy_chan_cancelled: bool,
+    client_rx: oneshot::Receiver<Client>,
+    client_chan_cancelled: bool,
     error_rx: oneshot::Receiver<io::Error>,
     error_chan_cancelled: bool,
 }
@@ -230,15 +230,15 @@ impl Connection {
             }
         }
     }
-    fn poll_client_proxy(&mut self) -> Option<Client> {
-        if self.client_proxy_chan_cancelled {
+    fn poll_client(&mut self) -> Option<Client> {
+        if self.client_chan_cancelled {
             return None;
         }
-        match self.client_proxy_rx.poll() {
-            Ok(Async::Ready(client_proxy)) => Some(client_proxy),
+        match self.client_rx.poll() {
+            Ok(Async::Ready(client)) => Some(client),
             Ok(Async::NotReady) => None,
             Err(_) => {
-                self.client_proxy_chan_cancelled = true;
+                self.client_chan_cancelled = true;
                 None
             }
         }
@@ -250,13 +250,13 @@ impl Future for Connection {
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        if let Some(client_proxy) = self.poll_client_proxy() {
+        if let Some(client) = self.poll_client() {
             trace!("Connection: terminating successfully and returning Client");
-            Ok(Async::Ready(client_proxy))
+            Ok(Async::Ready(client))
         } else if let Some(e) = self.poll_error() {
             trace!("Connection: terminating with an error {}", e);
             Err(e)
-        } else if self.client_proxy_chan_cancelled && self.error_chan_cancelled {
+        } else if self.client_chan_cancelled && self.error_chan_cancelled {
             panic!("Failed to receive outcome of the connection");
         } else {
             Ok(Async::NotReady)
