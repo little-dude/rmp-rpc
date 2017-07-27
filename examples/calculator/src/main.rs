@@ -21,7 +21,7 @@ fn main() {
 
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
 
-    thread::spawn(move || serve(&addr, Calculator::new()));
+    thread::spawn(move || serve(&addr, &Calculator::new()));
     thread::sleep(Duration::from_millis(100));
 
     let mut reactor = Core::new().expect("Failed to start even loop");

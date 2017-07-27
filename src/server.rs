@@ -53,7 +53,7 @@
 //! fn main() {
 //!     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
 //!     // start the server. This block indefinitely
-//!     serve(&addr, ExampleServer);
+//!     serve(&addr, &ExampleServer);
 //! }
 //! ```
 use std::io;
@@ -209,7 +209,7 @@ where
 }
 
 /// Create a tokio event loop and run the given `Service` on it.
-pub fn serve<B: ServiceBuilder>(address: &SocketAddr, service_builder: B) {
+pub fn serve<B: ServiceBuilder>(address: &SocketAddr, service_builder: &B) {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
     let listener = TcpListener::bind(address, &handle).unwrap();
