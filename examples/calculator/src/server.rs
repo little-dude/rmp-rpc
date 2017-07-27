@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::io;
 
 use futures::{future, BoxFuture};
-use rmp_rpc::server::{ServiceBuilder, Service};
+use rmp_rpc::server::{Service, ServiceBuilder};
 use rmpv::Value;
 
 #[derive(Clone)]
@@ -12,7 +12,9 @@ pub struct Calculator {
 
 impl Calculator {
     pub fn new() -> Self {
-        Calculator { value: Arc::new(Mutex::new(0)) }
+        Calculator {
+            value: Arc::new(Mutex::new(0)),
+        }
     }
 
     fn parse_args(params: &[Value]) -> Result<Vec<i64>, &'static str> {

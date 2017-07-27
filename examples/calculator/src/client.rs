@@ -1,9 +1,9 @@
 use std::net::SocketAddr;
 use rmp_rpc;
-use rmpv::{Value, Integer};
+use rmpv::{Integer, Value};
 use futures::Future;
 use tokio_core::reactor::Handle;
-use std::{fmt, error};
+use std::{error, fmt};
 
 pub type Response = Box<Future<Item = i64, Error = RpcError>>;
 
@@ -52,39 +52,33 @@ impl Client {
 
 fn parse_response(response: Result<Result<Value, Value>, ()>) -> Result<i64, RpcError> {
     match response? {
-        Ok(result) => {
-            if let Value::Integer(int) = result {
-                int.as_i64().ok_or_else(|| {
-                    RpcError::Client(
-                        "Could not parse server response as \
-                         an integer"
-                            .to_string(),
-                    )
-                })
-            } else {
-                Err(RpcError::Client(
-                    "Could not parse server response as an integer".to_string(),
-                ))
+        Ok(result) => if let Value::Integer(int) = result {
+            int.as_i64().ok_or_else(|| {
+                RpcError::Client(
+                    "Could not parse server response as \
+                     an integer"
+                        .to_string(),
+                )
+            })
+        } else {
+            Err(RpcError::Client(
+                "Could not parse server response as an integer".to_string(),
+            ))
+        },
+        Err(error) => if let Value::String(s) = error {
+            match s.as_str() {
+                Some(error_str) => Err(RpcError::Server(error_str.to_string())),
+                None => Err(RpcError::Client(
+                    "Could not parse server response as a \
+                     string"
+                        .to_string(),
+                )),
             }
-        }
-        Err(error) => {
-            if let Value::String(s) = error {
-                match s.as_str() {
-                    Some(error_str) => Err(RpcError::Server(error_str.to_string())),
-                    None => {
-                        Err(RpcError::Client(
-                            "Could not parse server response as a \
-                             string"
-                                .to_string(),
-                        ))
-                    }
-                }
-            } else {
-                Err(RpcError::Client(
-                    "Could not parse server response as a string".to_string(),
-                ))
-            }
-        }
+        } else {
+            Err(RpcError::Client(
+                "Could not parse server response as a string".to_string(),
+            ))
+        },
     }
 }
 
