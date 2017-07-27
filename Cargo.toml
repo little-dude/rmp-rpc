@@ -1,6 +1,6 @@
 [package]
 name = "rmp-rpc"
-version = "0.0.8"
+version = "0.0.9"
 authors = ["Corentin Henry <corentinhenry@gmail.com>"]
 description = "a msgpack-rpc client and server based on tokio"
 homepage = "https://github.com/little-dude/rmp-rpc"
