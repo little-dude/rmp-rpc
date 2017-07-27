@@ -5,13 +5,14 @@
 //!
 //! ```rust,no_run
 //! extern crate futures;
+//! extern crate rmpv;
 //! extern crate rmp_rpc;
 //!
 //! use std::io;
 //! use std::net::SocketAddr;
 //!
 //! use futures::{future, BoxFuture};
-//! use rmp_rpc::{Request, Notification};
+//! use rmpv::Value;
 //! use rmp_rpc::server::{Service, ServiceBuilder, serve};
 //!
 //! // Our server is dead simple and does not have any attribute
@@ -25,8 +26,8 @@
 //!     type T = &'static str;
 //!     type E = String;
 //!
-//!     fn handle_request(&mut self, request: &Request) -> BoxFuture<Result<Self::T, Self::E>, Self::Error> {
-//!         Box::new(match request.method.as_str() {
+//!     fn handle_request(&mut self, method: &str, _params: &[Value] ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error> {
+//!         Box::new(match method {
 //!             // return "world" if the request's method is "hello"
 //!             "hello" => future::ok(Ok("world")),
 //!             // otherwise, return an error
@@ -34,9 +35,9 @@
 //!         })
 //!     }
 //!
-//!     fn handle_notification(&mut self, notification: &Notification) -> BoxFuture<(), Self::Error> {
+//!     fn handle_notification(&mut self, method: &str, _params: &[Value]) -> BoxFuture<(), Self::Error> {
 //!         // just pring the notification's method name
-//!         Box::new(future::ok(println!("{}", notification.method.as_str())))
+//!         Box::new(future::ok(println!("{}", method)))
 //!     }
 //! }
 //!
