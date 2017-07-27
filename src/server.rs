@@ -61,11 +61,11 @@ use std::error::Error;
 use std::net::SocketAddr;
 
 use codec::Codec;
-use message::{Response, Message};
+use message::{Message, Response};
 
-use futures::{Async, Poll, Future, Stream, Sink, BoxFuture};
+use futures::{Async, BoxFuture, Future, Poll, Sink, Stream};
 use rmpv::Value;
-use tokio_core::net::{TcpStream, TcpListener};
+use tokio_core::net::{TcpListener, TcpStream};
 use tokio_core::reactor::Core;
 use tokio_io::AsyncRead;
 use tokio_io::codec::Framed;

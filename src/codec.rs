@@ -1,7 +1,7 @@
 use std::io;
 use rmpv;
-use bytes::{BytesMut, BufMut};
-use tokio_io::codec::{Encoder, Decoder};
+use bytes::{BufMut, BytesMut};
+use tokio_io::codec::{Decoder, Encoder};
 use errors::DecodeError;
 use message::Message;
 
@@ -21,16 +21,14 @@ impl Decoder for Codec {
                         res = Ok(Some(message));
                         break;
                     }
-                    Err(err) => {
-                        match err {
-                            DecodeError::Truncated => return Ok(None),
-                            DecodeError::Invalid => continue,
-                            DecodeError::UnknownIo(io_err) => {
-                                res = Err(io_err);
-                                break;
-                            }
+                    Err(err) => match err {
+                        DecodeError::Truncated => return Ok(None),
+                        DecodeError::Invalid => continue,
+                        DecodeError::UnknownIo(io_err) => {
+                            res = Err(io_err);
+                            break;
                         }
-                    }
+                    },
                 }
             }
             buf.position() as usize
@@ -54,7 +52,7 @@ impl Encoder for Codec {
 
 #[test]
 fn decode() {
-    use message::{Request, Message};
+    use message::{Message, Request};
     fn try_decode(input: &[u8], rest: &[u8]) -> io::Result<Option<Message>> {
         let mut codec = Codec {};
         let mut buf = BytesMut::from(input);

@@ -1,6 +1,6 @@
 use errors::*;
 use std::io::Read;
-use rmpv::{Value, Integer, Utf8String, decode};
+use rmpv::{decode, Integer, Utf8String, Value};
 use std::convert::From;
 
 /// Represents a `MessagePack-RPC` message as described in the
@@ -81,14 +81,12 @@ impl Message {
                 id,
                 ref method,
                 ref params,
-            }) => {
-                Value::Array(vec![
-                    Value::Integer(Integer::from(REQUEST_MESSAGE)),
-                    Value::Integer(Integer::from(id)),
-                    Value::String(Utf8String::from(method.as_str())),
-                    Value::Array(params.clone()),
-                ])
-            }
+            }) => Value::Array(vec![
+                Value::Integer(Integer::from(REQUEST_MESSAGE)),
+                Value::Integer(Integer::from(id)),
+                Value::String(Utf8String::from(method.as_str())),
+                Value::Array(params.clone()),
+            ]),
             Message::Response(Response { id, ref result }) => {
                 let (error, result) = match *result {
                     Ok(ref result) => (Value::Nil, result.to_owned()),
@@ -104,13 +102,11 @@ impl Message {
             Message::Notification(Notification {
                 ref method,
                 ref params,
-            }) => {
-                Value::Array(vec![
-                    Value::Integer(Integer::from(NOTIFICATION_MESSAGE)),
-                    Value::String(Utf8String::from(method.as_str())),
-                    Value::Array(params.to_owned()),
-                ])
-            }
+            }) => Value::Array(vec![
+                Value::Integer(Integer::from(NOTIFICATION_MESSAGE)),
+                Value::String(Utf8String::from(method.as_str())),
+                Value::Array(params.to_owned()),
+            ]),
         }
     }
 
@@ -208,18 +204,14 @@ impl Response {
         };
 
         match array[2] {
-            Value::Nil => {
-                Ok(Response {
-                    id: id,
-                    result: Ok(array[3].clone()),
-                })
-            }
-            ref error => {
-                Ok(Response {
-                    id: id,
-                    result: Err(error.clone()),
-                })
-            }
+            Value::Nil => Ok(Response {
+                id: id,
+                result: Ok(array[3].clone()),
+            }),
+            ref error => Ok(Response {
+                id: id,
+                result: Err(error.clone()),
+            }),
         }
     }
 }

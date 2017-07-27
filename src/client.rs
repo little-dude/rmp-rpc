@@ -54,9 +54,9 @@ use tokio_io::codec::Framed;
 
 use std::io;
 use std::net::SocketAddr;
-use message::{Request, Notification, Message};
+use message::{Message, Notification, Request};
 use rmpv::Value;
-use futures::{Async, Poll, Future, Stream, Sink};
+use futures::{Async, Future, Poll, Sink, Stream};
 use futures::sync::{mpsc, oneshot};
 use tokio_io::AsyncRead;
 use codec::Codec;
@@ -125,7 +125,7 @@ impl Client {
             "Client: new request (method={}, params={:?})",
             method,
             params
-            );
+        );
         let request = Request {
             id: 0,
             method: method.to_owned(),
@@ -146,7 +146,7 @@ impl Client {
             "Client: new notification (method={}, params={:?})",
             method,
             params
-            );
+        );
         let notification = Notification {
             method: method.to_owned(),
             params: Vec::from(params),
@@ -194,13 +194,13 @@ impl Client {
                     pending_notifications: Vec::new(),
                 }
             })
-        .or_else(|e| {
-            error!("Client: connection failed: {}", e);
-            if let Err(e) = error_tx.send(e) {
-                panic!("Failed to send client to connection: {:?}", e);
-            }
-            Err(())
-        });
+            .or_else(|e| {
+                error!("Client: connection failed: {}", e);
+                if let Err(e) = error_tx.send(e) {
+                    panic!("Failed to send client to connection: {:?}", e);
+                }
+                Err(())
+            });
 
         trace!("Spawning Endpoint and returning Connection");
         handle.spawn(client);
@@ -267,140 +267,137 @@ impl Future for Connection {
 impl Endpoint {
     fn handle_msg(&mut self, msg: Message) {
         match msg {
-            Message::Request(_) |
-                Message::Notification(_) => {
-                    trace!("Endpoint: got a request or notification from server. Ignoring it.");
-                }
+            Message::Request(_) | Message::Notification(_) => {
+                trace!("Endpoint: got a request or notification from server. Ignoring it.");
+            }
             Message::Response(response) => {
                 if let Some(response_sender) = self.pending_requests.remove(&response.id) {
                     trace!(
                         "Endpoint: got a response from server: {:?}, \
-                             and found the corresponding pending request.",
-                             response
-                          );
+                         and found the corresponding pending request.",
+                        response
+                    );
                     response_sender.send(response.result).unwrap();
                 } else {
                     trace!(
-                            "Endpoint: got a response from server: {:?}, \
-                            but no corresponding pending request. Ignoring it.",
-                            response
-                        );
-                    }
-                }
-            }
-        }
-
-        fn process_notifications(&mut self) {
-            loop {
-                match self.notifications_rx.poll().unwrap() {
-                    Async::Ready(Some((notification, ack_sender))) => {
-                        trace!(
-                            "Endpoint: received notification from Client. \
-                            Forwarding it to the server."
-                            );
-                        let send_task = self.stream
-                            .start_send(Message::Notification(notification))
-                            .unwrap();
-                        if !send_task.is_ready() {
-                            panic!("the sink is full")
-                        }
-                        self.pending_notifications.push(ack_sender);
-                    }
-                    Async::Ready(None) => {
-                        trace!(
-                            "Endpoint: Client closed the remote end of the notifications \
-                            channel. Entering shutdown state."
-                        );
-                        self.shutdown = true;
-                        return;
-                    }
-                    Async::NotReady => return,
-                }
-            }
-        }
-
-        fn process_requests(&mut self) {
-            loop {
-                match self.requests_rx.poll().unwrap() {
-                    Async::Ready(Some((mut request, response_sender))) => {
-                        self.request_id += 1;
-                        trace!(
-                            "Endpoint: received request from Client. \
-                            Forwarding it to the server with id {}.",
-                            self.request_id
-                        );
-                        request.id = self.request_id;
-                        let send_task = self.stream.start_send(Message::Request(request)).unwrap();
-                        if !send_task.is_ready() {
-                            panic!("the sink is full")
-                        }
-                        self.pending_requests
-                            .insert(self.request_id, response_sender);
-                    }
-                    Async::Ready(None) => {
-                        trace!(
-                            "Endpoint: Client closed the remote end of the requests channel. \
-                            Entering shutdown state."
-                            );
-                        self.shutdown = true;
-                        return;
-                    }
-                    Async::NotReady => return,
-                }
-            }
-        }
-
-        fn flush(&mut self) {
-            if self.stream.poll_complete().unwrap().is_ready() {
-                for ack_sender in self.pending_notifications.drain(..) {
-                    trace!(
-                        "Endpoint: letting Client know that pending notification has been sent"
+                        "Endpoint: got a response from server: {:?}, \
+                         but no corresponding pending request. Ignoring it.",
+                        response
                     );
-                    ack_sender.send(()).unwrap();
                 }
             }
         }
     }
 
-    impl Future for Endpoint {
-        type Item = ();
-        type Error = io::Error;
-
-        fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-            loop {
-                match self.stream.poll().unwrap() {
-                    Async::Ready(Some(msg)) => self.handle_msg(msg),
-                    Async::Ready(None) => {
-                        trace!(
-                            "Endpoint: stream with server has been closed. Terminating successfully"
-                        );
-                        return Ok(Async::Ready(()));
-                    }
-                    Async::NotReady => break,
-                }
-            }
-            if self.shutdown {
-                if self.pending_requests.is_empty() {
+    fn process_notifications(&mut self) {
+        loop {
+            match self.notifications_rx.poll().unwrap() {
+                Async::Ready(Some((notification, ack_sender))) => {
                     trace!(
-                        "Endpoint: all pending requests have been processed. \
-                        Terminating successfully"
+                        "Endpoint: received notification from Client. \
+                         Forwarding it to the server."
                     );
-                    Ok(Async::Ready(()))
-                } else {
-                    trace!(
-                        "Endpoint: not all pending requests have been processed. \
-                        Waiting before terminating"
-                        );
-                    Ok(Async::NotReady)
+                    let send_task = self.stream
+                        .start_send(Message::Notification(notification))
+                        .unwrap();
+                    if !send_task.is_ready() {
+                        panic!("the sink is full")
+                    }
+                    self.pending_notifications.push(ack_sender);
                 }
+                Async::Ready(None) => {
+                    trace!(
+                        "Endpoint: Client closed the remote end of the notifications \
+                         channel. Entering shutdown state."
+                    );
+                    self.shutdown = true;
+                    return;
+                }
+                Async::NotReady => return,
+            }
+        }
+    }
+
+    fn process_requests(&mut self) {
+        loop {
+            match self.requests_rx.poll().unwrap() {
+                Async::Ready(Some((mut request, response_sender))) => {
+                    self.request_id += 1;
+                    trace!(
+                        "Endpoint: received request from Client. \
+                         Forwarding it to the server with id {}.",
+                        self.request_id
+                    );
+                    request.id = self.request_id;
+                    let send_task = self.stream.start_send(Message::Request(request)).unwrap();
+                    if !send_task.is_ready() {
+                        panic!("the sink is full")
+                    }
+                    self.pending_requests
+                        .insert(self.request_id, response_sender);
+                }
+                Async::Ready(None) => {
+                    trace!(
+                        "Endpoint: Client closed the remote end of the requests channel. \
+                         Entering shutdown state."
+                    );
+                    self.shutdown = true;
+                    return;
+                }
+                Async::NotReady => return,
+            }
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.stream.poll_complete().unwrap().is_ready() {
+            for ack_sender in self.pending_notifications.drain(..) {
+                trace!("Endpoint: letting Client know that pending notification has been sent");
+                ack_sender.send(()).unwrap();
+            }
+        }
+    }
+}
+
+impl Future for Endpoint {
+    type Item = ();
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        loop {
+            match self.stream.poll().unwrap() {
+                Async::Ready(Some(msg)) => self.handle_msg(msg),
+                Async::Ready(None) => {
+                    trace!(
+                        "Endpoint: stream with server has been closed. Terminating successfully"
+                    );
+                    return Ok(Async::Ready(()));
+                }
+                Async::NotReady => break,
+            }
+        }
+        if self.shutdown {
+            if self.pending_requests.is_empty() {
+                trace!(
+                    "Endpoint: all pending requests have been processed. \
+                     Terminating successfully"
+                );
+                Ok(Async::Ready(()))
             } else {
-                self.process_notifications();
-                self.process_requests();
-                self.flush();
+                trace!(
+                    "Endpoint: not all pending requests have been processed. \
+                     Waiting before terminating"
+                );
                 Ok(Async::NotReady)
             }
+        } else {
+            self.process_notifications();
+            self.process_requests();
+            self.flush();
+            Ok(Async::NotReady)
         }
     }
+}
 
 impl Future for Client {
     type Item = ();

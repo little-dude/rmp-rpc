@@ -7,7 +7,7 @@ extern crate env_logger;
 
 
 use rmp_rpc::client::Client;
-use rmp_rpc::server::{ServiceBuilder, Service, serve};
+use rmp_rpc::server::{serve, Service, ServiceBuilder};
 use rmp_rpc::Value;
 
 use tokio_core::reactor::Core;
@@ -15,7 +15,7 @@ use std::marker::Send;
 use std::{io, thread};
 use std::time::Duration;
 use std::net::SocketAddr;
-use futures::{future, Future, BoxFuture};
+use futures::{future, BoxFuture, Future};
 
 
 #[derive(Clone)]
