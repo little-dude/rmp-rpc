@@ -5,18 +5,14 @@ extern crate rmp_rpc;
 extern crate log;
 extern crate env_logger;
 
-
-use rmp_rpc::client::Client;
-use rmp_rpc::server::{serve, Service, ServiceBuilder};
-use rmp_rpc::Value;
-
-use tokio_core::reactor::Core;
 use std::marker::Send;
 use std::{io, thread};
 use std::time::Duration;
 use std::net::SocketAddr;
-use futures::{future, BoxFuture, Future};
 
+use futures::{future, BoxFuture, Future};
+use rmp_rpc::{serve, DefaultConnector, Service, ServiceBuilder, Value};
+use tokio_core::reactor::Core;
 
 #[derive(Clone)]
 pub struct HelloWorld;
@@ -82,8 +78,10 @@ fn main() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
+
     let _ = core.run(
-        Client::connect(&addr, &handle)
+        DefaultConnector::new(&addr, &handle)
+            .connect()
             .or_else(|e| {
                 println!("Connection to server failed: {}", e);
                 Err(())
