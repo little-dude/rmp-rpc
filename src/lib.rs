@@ -17,7 +17,9 @@ extern crate tokio_core;
 mod errors;
 mod codec;
 mod message;
-pub mod server;
-pub mod client;
+mod endpoint;
+
+pub use endpoint::{serve, Ack, Client, Connection, Connector, DefaultConnector, Response, Service,
+                   ServiceBuilder};
 
 pub use rmpv::{Integer, Utf8String, Value};
