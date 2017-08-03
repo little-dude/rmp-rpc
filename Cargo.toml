@@ -1,22 +1,23 @@
 [package]
-name = "rmp-rpc"
-version = "0.0.9"
 authors = ["Corentin Henry <corentinhenry@gmail.com>"]
 description = "a msgpack-rpc client and server based on tokio"
 homepage = "https://github.com/little-dude/rmp-rpc"
-repository = "https://github.com/little-dude/rmp-rpc"
-readme = "README.md"
 keywords = ["msgpack", "rpc", "msgpack-rpc"]
 license-file = "LICENSE-MIT"
-
+name = "rmp-rpc"
+readme = "README.md"
+repository = "https://github.com/little-dude/rmp-rpc"
+version = "0.0.9"
 [dependencies]
-bytes = "0.4"
-env_logger = "0.4"
-futures = "0.1"
-log = "0.3"
-rmp = "0.8"
-rmpv = "0.4"
-tokio-core = "0.1"
-tokio-io = "0.1"
+bytes = "0.4.4"
+env_logger = "0.4.3"
+futures = "0.1.14"
+log = "0.3.8"
+rmp = "0.8.6"
+rmpv = "0.4.0"
+tokio-core = "0.1.9"
+tokio-io = "0.1.2"
 
-clippy = {version = ">=0.0, <0.1", optional = true}
+[dependencies.clippy]
+optional = true
+version = "0.0.148"
