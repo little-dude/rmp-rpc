@@ -1,20 +1,19 @@
 use std::net::SocketAddr;
-use rmp_rpc;
-use rmpv::{Integer, Value};
+use rmp_rpc::{self, DefaultConnector, Integer, Value};
 use futures::Future;
 use tokio_core::reactor::Handle;
 use std::{error, fmt};
 
 pub type Response = Box<Future<Item = i64, Error = RpcError>>;
 
-pub struct Client(rmp_rpc::client::Client);
+pub struct Client(rmp_rpc::Client);
 
 impl Client {
     pub fn connect(
         addr: &SocketAddr,
         handle: &Handle,
     ) -> Box<Future<Item = Self, Error = RpcError>> {
-        let client = rmp_rpc::client::Client::connect(addr, handle)
+        let client = DefaultConnector::new(addr, handle).connect()
             .map(Client)
             .map_err(|_| ())
             .map_err(From::from);

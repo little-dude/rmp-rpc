@@ -1,11 +1,12 @@
 [package]
-name = "calculator-example"
-version = "0.0.1"
 authors = ["Corentin Henry <corentinhenry@gmail.com>"]
 description = "a simple calculator msgpack-rpc server and client"
-
+name = "calculator-example"
+version = "0.0.1"
 [dependencies]
-rmp-rpc = { path = "../.." }
-futures = "*"
-tokio-core = "*"
-rmpv = "*"
+futures = "0.1.14"
+rmpv = "0.4.0"
+tokio-core = "0.1.9"
+
+[dependencies.rmp-rpc]
+path = "../.."
