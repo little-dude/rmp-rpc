@@ -13,7 +13,8 @@ impl Client {
         addr: &SocketAddr,
         handle: &Handle,
     ) -> Box<Future<Item = Self, Error = RpcError>> {
-        let client = DefaultConnector::new(addr, handle).connect()
+        let client = DefaultConnector::new(addr, handle)
+            .connect()
             .map(Client)
             .map_err(|_| ())
             .map_err(From::from);
