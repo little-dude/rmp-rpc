@@ -4,12 +4,12 @@ use std::error::Error;
 use std::io;
 use std::net::SocketAddr;
 
-use futures::{Async, AsyncSink, BoxFuture, Canceled, Future, Poll, Sink, Stream};
+use futures::{Async, AsyncSink, BoxFuture, Canceled, Future, Poll, Sink, StartSend, Stream};
 use futures::sync::{mpsc, oneshot};
 use tokio_core::net::{TcpListener, TcpStream};
 use tokio_core::reactor::{Core, Handle};
 use tokio_io::codec::Framed;
-use tokio_io::AsyncRead;
+use tokio_io::{AsyncRead, AsyncWrite};
 use rmpv::Value;
 
 use message::{Message, Notification, Request};
@@ -62,7 +62,7 @@ impl<S: Service> Server<S> {
         }
     }
 
-    fn poll_request_tasks(&mut self, stream: &mut Transport) {
+    fn poll_request_tasks<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
         let mut done = vec![];
         for (id, task) in &mut self.request_tasks {
             match task.poll().unwrap() {
@@ -170,7 +170,7 @@ impl InnerClient {
         self.shutting_down
     }
 
-    fn process_notifications(&mut self, stream: &mut Transport) {
+    fn process_notifications<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
         loop {
             match self.notifications_rx.poll() {
                 Ok(Async::Ready(Some((notification, ack_sender)))) => {
@@ -193,7 +193,7 @@ impl InnerClient {
         }
     }
 
-    fn process_requests(&mut self, stream: &mut Transport) {
+    fn process_requests<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
         loop {
             match self.requests_rx.poll() {
                 Ok(Async::Ready(Some((mut request, response_sender)))) => {
@@ -243,36 +243,63 @@ impl InnerClient {
     }
 }
 
-struct Endpoint<S: Service> {
-    stream: RefCell<Transport>,
+struct Endpoint<S: Service, T: AsyncRead + AsyncWrite> {
+    stream: RefCell<Transport<T>>,
     client: Option<RefCell<InnerClient>>,
     server: Option<RefCell<Server<S>>>,
 }
 
-struct Transport(Framed<TcpStream, Codec>);
+struct Transport<T: AsyncRead + AsyncWrite>(Framed<T, Codec>);
 
-impl Transport {
+impl<T> Transport<T>
+where
+    T: AsyncRead + AsyncWrite,
+{
     fn send(&mut self, message: Message) {
         trace!(">>> {:?}", message);
-        match self.0.start_send(message) {
+        match self.start_send(message) {
             Ok(AsyncSink::Ready) => return,
             // FIXME: there should probably be a retry mechanism.
             Ok(AsyncSink::NotReady(_message)) => panic!("The sink is full."),
             Err(e) => panic!("An error occured while trying to send message: {:?}", e),
         }
     }
+}
 
-    fn poll_complete(&mut self) -> Result<Async<()>, io::Error> {
-        self.0.poll_complete()
-    }
+impl<T> Stream for Transport<T>
+where
+    T: AsyncRead + AsyncWrite,
+{
+    type Item = Message;
+    type Error = io::Error;
 
-    fn poll(&mut self) -> Result<Async<Option<Message>>, io::Error> {
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         self.0.poll()
     }
 }
 
-impl<S: Service> Endpoint<S> {
-    fn new(stream: TcpStream) -> Self {
+impl<T> Sink for Transport<T>
+where
+    T: AsyncRead + AsyncWrite,
+{
+    type SinkItem = Message;
+    type SinkError = io::Error;
+
+    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+        self.0.start_send(item)
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+        self.0.poll_complete()
+    }
+}
+
+impl<S, T> Endpoint<S, T>
+where
+    S: Service,
+    T: AsyncRead + AsyncWrite,
+{
+    fn new(stream: T) -> Self {
         Endpoint {
             stream: RefCell::new(Transport(stream.framed(Codec))),
             client: None,
@@ -324,7 +351,10 @@ impl<S: Service> Endpoint<S> {
     }
 }
 
-impl<S: Service> Future for Endpoint<S> {
+impl<S, T: AsyncRead + AsyncWrite> Future for Endpoint<S, T>
+where
+    S: Service,
+{
     type Item = ();
     type Error = io::Error;
 
