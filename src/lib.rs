@@ -13,6 +13,8 @@ extern crate futures;
 extern crate log;
 extern crate tokio_io;
 extern crate tokio_core;
+extern crate tokio_tls;
+extern crate native_tls;
 
 mod errors;
 mod codec;

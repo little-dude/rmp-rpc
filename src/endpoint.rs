@@ -6,10 +6,12 @@ use std::net::SocketAddr;
 
 use futures::{Async, AsyncSink, BoxFuture, Canceled, Future, Poll, Sink, StartSend, Stream};
 use futures::sync::{mpsc, oneshot};
+use native_tls::TlsConnector;
 use tokio_core::net::{TcpListener, TcpStream};
 use tokio_core::reactor::{Core, Handle};
 use tokio_io::codec::Framed;
 use tokio_io::{AsyncRead, AsyncWrite};
+use tokio_tls::TlsConnectorExt;
 use rmpv::Value;
 
 use message::{Message, Notification, Request};
@@ -491,16 +493,32 @@ pub struct Connector<'a, 'b, S> {
     service: Option<S>,
     address: &'a SocketAddr,
     handle: &'b Handle,
+    tls: bool,
+    tls_domain: Option<String>,
 }
 
-impl<'a, 'b, S: Service + 'static> Connector<'a, 'b, S> {
+impl<'a, 'b, S: Service + Sync + Send + 'static> Connector<'a, 'b, S> {
     /// Create a new `Connector`. `address` is the address of the remote `MessagePack-RPC` server.
     pub fn new(address: &'a SocketAddr, handle: &'b Handle) -> Self {
         Connector {
             service: None,
             address: address,
             handle: handle,
+            tls: false,
+            tls_domain: None,
         }
+    }
+
+    pub fn set_tls_connector(&mut self, domain: String) -> &mut Self {
+        self.tls = true;
+        self.tls_domain = Some(domain);
+        self
+    }
+
+    pub fn set_tls_connector_with_hostname_verification_disabled(&mut self) -> &mut Self {
+        self.tls = true;
+        self.tls_domain = None;
+        self
     }
 
     /// Make the client able to handle incoming requests and notification using the given service.
@@ -515,26 +533,54 @@ impl<'a, 'b, S: Service + 'static> Connector<'a, 'b, S> {
     pub fn connect(mut self) -> Connection {
         trace!("Trying to connect to {}.", self.address);
 
-        let (client_tx, client_rx) = oneshot::channel();
-        let (error_tx, error_rx) = oneshot::channel();
+        let (connection, client_tx, error_tx) = Connection::new();
 
-        let connection = Connection {
-            client_rx: client_rx,
-            error_rx: error_rx,
-        };
+        if self.tls {
+            let endpoint = self.tls_connect(client_tx, error_tx);
+            self.handle.spawn(endpoint);
+        } else {
+            let endpoint = self.tcp_connect(client_tx, error_tx);
+            self.handle.spawn(endpoint);
+        }
+
+        connection
+    }
+
+    // FIXME: I don't really understand why the return type is BoxFuture<(), ()>
+    // I thought is would be BoxFuture<Endpoint<S, TlsStream<TcpStream>>, ()>
+    fn tls_connect(
+        &mut self,
+        client_tx: oneshot::Sender<Client>,
+        error_tx: oneshot::Sender<io::Error>,
+    ) -> BoxFuture<(), ()> {
+        let tcp_connection = TcpStream::connect(self.address, self.handle);
+
+        let domain = self.tls_domain.take();
+        let tls_handshake = tcp_connection.and_then(move |stream| {
+            trace!("TCP connection established. Starting TLS handshake.");
+            let tls_connector =  TlsConnector::builder().unwrap().build().unwrap();
+            if let Some(domain) = domain {
+                tls_connector.connect_async(&domain, stream)
+            } else {
+                tls_connector.danger_connect_async_without_providing_domain_for_certificate_verification_and_server_name_indication(stream)
+            }.map_err(|e| { io::Error::new(io::ErrorKind::Other, e) })
+        });
 
         let service = self.service.take();
-        let client_proxy = TcpStream::connect(self.address, self.handle)
+        let endpoint = tls_handshake
             .and_then(move |stream| {
-                trace!("Connection established.");
+                trace!("TLS handshake done.");
+
                 let mut endpoint = Endpoint::new(stream);
                 if let Some(service) = service {
                     endpoint.set_server(service);
                 }
+
                 let client_proxy = endpoint.set_client();
                 if client_tx.send(client_proxy).is_err() {
-                    panic!("Failed to send client to connection");
+                    panic!("Failed to send client to connection.");
                 }
+
                 endpoint
             })
             .or_else(|e| {
@@ -545,9 +591,42 @@ impl<'a, 'b, S: Service + 'static> Connector<'a, 'b, S> {
                 Err(())
             });
 
-        trace!("Spawning Endpoint and returning Connection");
-        self.handle.spawn(client_proxy);
-        connection
+        Box::new(endpoint)
+    }
+
+    // FIXME: I don't really understand why the return type is BoxFuture<(), ()>
+    // I thought is would be BoxFuture<(), ()>
+    fn tcp_connect(
+        &mut self,
+        client_tx: oneshot::Sender<Client>,
+        error_tx: oneshot::Sender<io::Error>,
+    ) -> BoxFuture<(), ()> {
+        let service = self.service.take();
+        let endpoint = TcpStream::connect(self.address, self.handle)
+            .and_then(move |stream| {
+                trace!("TCP connection established.");
+
+                let mut endpoint = Endpoint::new(stream);
+                if let Some(service) = service {
+                    endpoint.set_server(service);
+                }
+
+                let client_proxy = endpoint.set_client();
+                if client_tx.send(client_proxy).is_err() {
+                    panic!("Failed to send client to connection.");
+                }
+
+                endpoint
+            })
+            .or_else(|e| {
+                error!("Connection failed: {:?}.", e);
+                if let Err(e) = error_tx.send(e) {
+                    panic!("Failed to send client to connection: {:?}", e);
+                }
+                Err(())
+            });
+
+        Box::new(endpoint)
     }
 }
 
@@ -598,6 +677,18 @@ pub struct Connection {
 }
 
 impl Connection {
+    fn new() -> (Self, oneshot::Sender<Client>, oneshot::Sender<io::Error>) {
+        let (client_tx, client_rx) = oneshot::channel();
+        let (error_tx, error_rx) = oneshot::channel();
+
+        let connection = Connection {
+            client_rx: client_rx,
+            error_rx: error_rx,
+        };
+
+        (connection, client_tx, error_tx)
+    }
+
     fn poll_error(&mut self) -> Option<io::Error> {
         match self.error_rx.poll() {
             Ok(Async::Ready(e)) => Some(e),
