@@ -71,7 +71,7 @@ fn main() {
     env_logger::init().unwrap();
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
 
-    thread::spawn(move || serve(&addr, &HelloWorld));
+    thread::spawn(move || serve(&addr, HelloWorld));
     thread::sleep(Duration::from_millis(100));
 
     let mut core = Core::new().unwrap();

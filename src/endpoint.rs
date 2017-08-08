@@ -412,7 +412,7 @@ pub trait ServiceBuilder {
 }
 
 /// Start a `MessagePack-RPC` server.
-pub fn serve<B: ServiceBuilder>(address: &SocketAddr, service_builder: &B) {
+pub fn serve<B: ServiceBuilder>(address: &SocketAddr, service_builder: B) {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
     let listener = TcpListener::bind(address, &handle).unwrap();
@@ -533,7 +533,7 @@ impl<'a, 'b, S: ServiceBuilder + Sync + Send + 'static> Connector<'a, 'b, S> {
     }
 
     /// Connect to the remote `MessagePack-RPC` endpoint. This consumes the `Connector`.
-    pub fn connect(mut self) -> Connection {
+    pub fn connect(&mut self) -> Connection {
         trace!("Trying to connect to {}.", self.address);
 
         let (connection, client_tx, error_tx) = Connection::new();
@@ -690,7 +690,7 @@ impl<'a, 'b> ClientOnlyConnector<'a, 'b> {
     }
 
     /// Connect to the remote `MessagePack-RPC` server.
-    pub fn connect(self) -> Connection {
+    pub fn connect(&mut self) -> Connection {
         self.0.connect()
     }
 
