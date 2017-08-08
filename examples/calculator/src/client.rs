@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use rmp_rpc::{self, DefaultConnector, Integer, Value};
+use rmp_rpc::{self, ClientOnlyConnector, Integer, Value};
 use futures::Future;
 use tokio_core::reactor::Handle;
 use std::{error, fmt};
@@ -13,7 +13,7 @@ impl Client {
         addr: &SocketAddr,
         handle: &Handle,
     ) -> Box<Future<Item = Self, Error = RpcError>> {
-        let client = DefaultConnector::new(addr, handle)
+        let client = ClientOnlyConnector::new(addr, handle)
             .connect()
             .map(Client)
             .map_err(|_| ())

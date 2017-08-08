@@ -11,7 +11,7 @@ use std::time::Duration;
 use std::net::SocketAddr;
 
 use futures::{future, BoxFuture, Future};
-use rmp_rpc::{serve, DefaultConnector, Service, ServiceBuilder, Value};
+use rmp_rpc::{serve, ClientOnlyConnector, Service, ServiceBuilder, Value};
 use tokio_core::reactor::Core;
 
 #[derive(Clone)]
@@ -80,7 +80,7 @@ fn main() {
 
 
     let _ = core.run(
-        DefaultConnector::new(&addr, &handle)
+        ClientOnlyConnector::new(&addr, &handle)
             .connect()
             .or_else(|e| {
                 println!("Connection to server failed: {}", e);

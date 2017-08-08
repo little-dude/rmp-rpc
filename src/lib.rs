@@ -21,7 +21,7 @@ mod codec;
 mod message;
 mod endpoint;
 
-pub use endpoint::{serve, Ack, Client, Connection, Connector, DefaultConnector, Response, Service,
-                   ServiceBuilder};
+pub use endpoint::{serve, Ack, Client, ClientOnlyConnector, Connection, Connector, Response,
+                   Service, ServiceBuilder};
 
 pub use rmpv::{Integer, Utf8String, Value};

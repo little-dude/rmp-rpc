@@ -24,14 +24,14 @@ pub trait Service {
     type T: Into<Value>;
     type E: Into<Value>;
 
-    /// Handle a `MessagePack-RPC` request
+    /// Handle a `MessagePack-RPC` request.
     fn handle_request(
         &mut self,
         method: &str,
         params: &[Value],
     ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error>;
 
-    /// Handle a `MessagePack-RPC` notification
+    /// Handle a `MessagePack-RPC` notification.
     fn handle_notification(&mut self, method: &str, params: &[Value])
         -> BoxFuture<(), Self::Error>;
 }
@@ -435,7 +435,7 @@ impl Clone for Client {
 }
 
 impl Client {
-    pub fn new(requests_tx: RequestTx, notifications_tx: NotificationTx) -> Self {
+    fn new(requests_tx: RequestTx, notifications_tx: NotificationTx) -> Self {
         Client {
             requests_tx: requests_tx,
             notifications_tx: notifications_tx,
@@ -488,7 +488,7 @@ impl Future for Client {
 /// behaves both like a client (_i.e._ sends requests and notifications to the remote endpoint) and
 /// like a server (_i.e._ handles incoming `MessagePack-RPC` requests and notifications). If you
 /// need a regular client that only sends `MessagePack-RPC` requests and notifications, use
-/// [`DefaultConnector`](struct.DefaultConnector.html).
+/// [`ClientOnlyConnector`](struct.ClientOnlyConnector.html).
 pub struct Connector<'a, 'b, S> {
     service: Option<S>,
     address: &'a SocketAddr,
@@ -509,12 +509,17 @@ impl<'a, 'b, S: Service + Sync + Send + 'static> Connector<'a, 'b, S> {
         }
     }
 
+    /// Enable TLS for this connection. `domain` is the hostname of the remote endpoint so which we
+    /// are connecting.
     pub fn set_tls_connector(&mut self, domain: String) -> &mut Self {
         self.tls = true;
         self.tls_domain = Some(domain);
         self
     }
 
+    /// Enable TLS for this connection, but without hostname verification. This is dangerous,
+    /// because it means that any server with a valid certificate will be trusted. Hence, it is not
+    /// recommended.
     pub fn set_tls_connector_with_hostname_verification_disabled(&mut self) -> &mut Self {
         self.tls = true;
         self.tls_domain = None;
@@ -595,7 +600,7 @@ impl<'a, 'b, S: Service + Sync + Send + 'static> Connector<'a, 'b, S> {
     }
 
     // FIXME: I don't really understand why the return type is BoxFuture<(), ()>
-    // I thought is would be BoxFuture<(), ()>
+    // I thought is would be BoxFuture<Endpoint<S, TcpStream>, ()>
     fn tcp_connect(
         &mut self,
         client_tx: oneshot::Sender<Client>,
@@ -655,18 +660,43 @@ impl Service for NoService {
     }
 }
 
-/// A `Connector` for `MessagePack-RPC` clients. See also [`Connector`](struct.Connector.html).
-pub struct DefaultConnector<'a, 'b>(Connector<'a, 'b, NoService>);
+/// A connector for `MessagePack-RPC` clients. Such a connector results in a client that does not
+/// handle requests and responses coming from the remote endpoint. It can only _send_ requests and
+/// notifications. Incoming requests and notifications will be silently ignored.
+///
+/// If you need a client that handles incoming requests and notifications, implement a `Service`,
+/// and use it with a regular `Connector` (see also:
+/// [`Connector::set_service`](struct.Connector.html#method.set_service))
+///
+/// `ClientOnlyConnector` is just a wrapper around `Connector` to reduce boilerplate for people who
+/// only need a basic MessagePack-RPC client.
+pub struct ClientOnlyConnector<'a, 'b>(Connector<'a, 'b, NoService>);
 
-impl<'a, 'b> DefaultConnector<'a, 'b> {
-    /// Create a new `DefaultConnector`.
+impl<'a, 'b> ClientOnlyConnector<'a, 'b> {
+    /// Create a new `ClientOnlyConnector`.
     pub fn new(address: &'a SocketAddr, handle: &'b Handle) -> Self {
-        DefaultConnector(Connector::<'a, 'b, NoService>::new(address, handle))
+        ClientOnlyConnector(Connector::<'a, 'b, NoService>::new(address, handle))
     }
 
     /// Connect to the remote `MessagePack-RPC` server.
     pub fn connect(self) -> Connection {
         self.0.connect()
+    }
+
+    /// Enable TLS for this connection. `domain` is the hostname of the remote endpoint so which we
+    /// are connecting.
+    pub fn set_tls_connector(&mut self, domain: String) -> &mut Self {
+        let _ = self.0.set_tls_connector(domain);
+        self
+    }
+
+    /// Enable TLS for this connection, but without hostname verification. This is dangerous,
+    /// because it means that any server with a valid certificate will be trusted. Hence, it is not
+    /// recommended.
+    pub fn set_tls_connector_with_hostname_verification_disabled(&mut self) -> &mut Self {
+        let _ = self.0
+            .set_tls_connector_with_hostname_verification_disabled();
+        self
     }
 }
 
