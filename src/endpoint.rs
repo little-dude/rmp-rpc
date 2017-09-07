@@ -29,17 +29,20 @@ pub trait Service {
         &mut self,
         method: &str,
         params: &[Value],
-    ) -> Box<Future<Item=Result<Self::T, Self::E>, Error=Self::Error>>;
+    ) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>>;
 
     /// Handle a `MessagePack-RPC` notification.
-    fn handle_notification(&mut self, method: &str, params: &[Value])
-        -> Box<Future<Item=(), Error=Self::Error>>;
+    fn handle_notification(
+        &mut self,
+        method: &str,
+        params: &[Value],
+    ) -> Box<Future<Item = (), Error = Self::Error>>;
 }
 
 struct Server<S: Service> {
     service: S,
-    request_tasks: HashMap<u32, Box<Future<Item=Result<S::T, S::E>, Error=S::Error>>>,
-    notification_tasks: Vec<Box<Future<Item=(), Error=S::Error>>>,
+    request_tasks: HashMap<u32, Box<Future<Item = Result<S::T, S::E>, Error = S::Error>>>,
+    notification_tasks: Vec<Box<Future<Item = (), Error = S::Error>>>,
 }
 
 impl<S: Service> Server<S> {
@@ -556,7 +559,7 @@ impl<'a, 'b, S: ServiceBuilder + Sync + Send + 'static> Connector<'a, 'b, S> {
         &mut self,
         client_tx: oneshot::Sender<Client>,
         error_tx: oneshot::Sender<io::Error>,
-    ) -> Box<Future<Item=(), Error=()>> {
+    ) -> Box<Future<Item = (), Error = ()>> {
         let tcp_connection = TcpStream::connect(self.address, self.handle);
 
         let domain = self.tls_domain.take();
@@ -605,7 +608,7 @@ impl<'a, 'b, S: ServiceBuilder + Sync + Send + 'static> Connector<'a, 'b, S> {
         &mut self,
         client_tx: oneshot::Sender<Client>,
         error_tx: oneshot::Sender<io::Error>,
-    ) -> Box<Future<Item=(), Error=()>> {
+    ) -> Box<Future<Item = (), Error = ()>> {
         let service_builder = self.service_builder.take();
         let endpoint = TcpStream::connect(self.address, self.handle)
             .and_then(move |stream| {
@@ -650,7 +653,7 @@ impl Service for NoService {
         &mut self,
         _method: &str,
         _params: &[Value],
-    ) -> Box<Future<Item=Result<Self::T, Self::E>, Error=Self::Error>> {
+    ) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>> {
         panic!("This endpoint does not handle requests");
     }
 
@@ -659,7 +662,7 @@ impl Service for NoService {
         &mut self,
         _method: &str,
         _params: &[Value],
-    ) -> Box<Future<Item=(), Error=Self::Error>> {
+    ) -> Box<Future<Item = (), Error = Self::Error>> {
         panic!("This endpoint does not handle notifications");
     }
 }
