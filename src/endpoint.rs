@@ -4,7 +4,7 @@ use std::error::Error;
 use std::io;
 use std::net::SocketAddr;
 
-use futures::{Async, AsyncSink, BoxFuture, Canceled, Future, Poll, Sink, StartSend, Stream};
+use futures::{Async, AsyncSink, Canceled, Future, Poll, Sink, StartSend, Stream};
 use futures::sync::{mpsc, oneshot};
 use native_tls::TlsConnector;
 use tokio_core::net::{TcpListener, TcpStream};
@@ -29,17 +29,17 @@ pub trait Service {
         &mut self,
         method: &str,
         params: &[Value],
-    ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error>;
+    ) -> Box<Future<Item=Result<Self::T, Self::E>, Error=Self::Error>>;
 
     /// Handle a `MessagePack-RPC` notification.
     fn handle_notification(&mut self, method: &str, params: &[Value])
-        -> BoxFuture<(), Self::Error>;
+        -> Box<Future<Item=(), Error=Self::Error>>;
 }
 
 struct Server<S: Service> {
     service: S,
-    request_tasks: HashMap<u32, BoxFuture<Result<S::T, S::E>, S::Error>>,
-    notification_tasks: Vec<BoxFuture<(), S::Error>>,
+    request_tasks: HashMap<u32, Box<Future<Item=Result<S::T, S::E>, Error=S::Error>>>,
+    notification_tasks: Vec<Box<Future<Item=(), Error=S::Error>>>,
 }
 
 impl<S: Service> Server<S> {
@@ -453,7 +453,7 @@ impl Client {
         // we are just dropping the `tx`, which will mean the rx will return Canceled when
         // polled. In turn, that is translated into a BrokenPipe, which conveys the proper
         // error.
-        let _ = mpsc::UnboundedSender::send(&self.requests_tx, (request, tx));
+        let _ = mpsc::UnboundedSender::unbounded_send(&self.requests_tx, (request, tx));
         Response(rx)
     }
 
@@ -465,7 +465,7 @@ impl Client {
             params: Vec::from(params),
         };
         let (tx, rx) = oneshot::channel();
-        let _ = mpsc::UnboundedSender::send(&self.notifications_tx, (notification, tx));
+        let _ = mpsc::UnboundedSender::unbounded_send(&self.notifications_tx, (notification, tx));
         Ack(rx)
     }
 }
@@ -556,7 +556,7 @@ impl<'a, 'b, S: Service + Sync + Send + 'static> Connector<'a, 'b, S> {
         &mut self,
         client_tx: oneshot::Sender<Client>,
         error_tx: oneshot::Sender<io::Error>,
-    ) -> BoxFuture<(), ()> {
+    ) -> Box<Future<Item=(), Error=()>> {
         let tcp_connection = TcpStream::connect(self.address, self.handle);
 
         let domain = self.tls_domain.take();
@@ -604,7 +604,7 @@ impl<'a, 'b, S: Service + Sync + Send + 'static> Connector<'a, 'b, S> {
         &mut self,
         client_tx: oneshot::Sender<Client>,
         error_tx: oneshot::Sender<io::Error>,
-    ) -> BoxFuture<(), ()> {
+    ) -> Box<Future<Item=(), Error=()>> {
         let service = self.service.take();
         let endpoint = TcpStream::connect(self.address, self.handle)
             .and_then(move |stream| {
@@ -645,7 +645,7 @@ impl Service for NoService {
         &mut self,
         _method: &str,
         _params: &[Value],
-    ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error> {
+    ) -> Box<Future<Item=Result<Self::T, Self::E>, Error=Self::Error>> {
         unreachable!();
     }
 
@@ -654,7 +654,7 @@ impl Service for NoService {
         &mut self,
         _method: &str,
         _params: &[Value],
-    ) -> BoxFuture<(), Self::Error> {
+    ) -> Box<Future<Item=(), Error=Self::Error>> {
         unreachable!();
     }
 }
