@@ -489,18 +489,18 @@ impl Future for Client {
 /// need a regular client that only sends `MessagePack-RPC` requests and notifications, use
 /// [`ClientOnlyConnector`](struct.ClientOnlyConnector.html).
 pub struct Connector<'a, 'b, S> {
-    service: Option<S>,
+    service_builder: Option<S>,
     address: &'a SocketAddr,
     handle: &'b Handle,
     tls: bool,
     tls_domain: Option<String>,
 }
 
-impl<'a, 'b, S: Service + Sync + Send + 'static> Connector<'a, 'b, S> {
+impl<'a, 'b, S: ServiceBuilder + Sync + Send + 'static> Connector<'a, 'b, S> {
     /// Create a new `Connector`. `address` is the address of the remote `MessagePack-RPC` server.
     pub fn new(address: &'a SocketAddr, handle: &'b Handle) -> Self {
         Connector {
-            service: None,
+            service_builder: None,
             address: address,
             handle: handle,
             tls: false,
@@ -528,8 +528,8 @@ impl<'a, 'b, S: Service + Sync + Send + 'static> Connector<'a, 'b, S> {
     /// Make the client able to handle incoming requests and notification using the given service.
     /// Once the connection is established, the client will act as a server and answer requests and
     /// notifications in background, using this service.
-    pub fn set_service(&mut self, service: S) -> &mut Self {
-        self.service = Some(service);
+    pub fn set_service_builder(&mut self, builder: S) -> &mut Self {
+        self.service_builder = Some(builder);
         self
     }
 
@@ -570,19 +570,20 @@ impl<'a, 'b, S: Service + Sync + Send + 'static> Connector<'a, 'b, S> {
             }.map_err(|e| { io::Error::new(io::ErrorKind::Other, e) })
         });
 
-        let service = self.service.take();
+        let service_builder = self.service_builder.take();
         let endpoint = tls_handshake
             .and_then(move |stream| {
                 trace!("TLS handshake done.");
 
                 let mut endpoint = Endpoint::new(stream);
-                if let Some(service) = service {
-                    endpoint.set_server(service);
-                }
 
                 let client_proxy = endpoint.set_client();
-                if client_tx.send(client_proxy).is_err() {
+                if client_tx.send(client_proxy.clone()).is_err() {
                     panic!("Failed to send client to connection.");
+                }
+
+                if let Some(service_builder) = service_builder {
+                    endpoint.set_server(service_builder.build(client_proxy));
                 }
 
                 endpoint
@@ -605,19 +606,20 @@ impl<'a, 'b, S: Service + Sync + Send + 'static> Connector<'a, 'b, S> {
         client_tx: oneshot::Sender<Client>,
         error_tx: oneshot::Sender<io::Error>,
     ) -> Box<Future<Item=(), Error=()>> {
-        let service = self.service.take();
+        let service_builder = self.service_builder.take();
         let endpoint = TcpStream::connect(self.address, self.handle)
             .and_then(move |stream| {
                 trace!("TCP connection established.");
 
                 let mut endpoint = Endpoint::new(stream);
-                if let Some(service) = service {
-                    endpoint.set_server(service);
-                }
 
                 let client_proxy = endpoint.set_client();
-                if client_tx.send(client_proxy).is_err() {
+                if client_tx.send(client_proxy.clone()).is_err() {
                     panic!("Failed to send client to connection.");
+                }
+
+                if let Some(service_builder) = service_builder {
+                    endpoint.set_server(service_builder.build(client_proxy));
                 }
 
                 endpoint
@@ -634,6 +636,8 @@ impl<'a, 'b, S: Service + Sync + Send + 'static> Connector<'a, 'b, S> {
     }
 }
 
+/// A dummy Service that is used for endpoints that act as pure clients, i.e. that do not need to
+/// act handle incoming requests or notifications.
 struct NoService;
 
 impl Service for NoService {
@@ -641,21 +645,30 @@ impl Service for NoService {
     type T = String;
     type E = String;
 
+    /// Handle a `MessagePack-RPC` request by panicking
     fn handle_request(
         &mut self,
         _method: &str,
         _params: &[Value],
     ) -> Box<Future<Item=Result<Self::T, Self::E>, Error=Self::Error>> {
-        unreachable!();
+        panic!("This endpoint does not handle requests");
     }
 
-    /// Handle a `MessagePack-RPC` notification
+    /// Handle a `MessagePack-RPC` notification by panicking
     fn handle_notification(
         &mut self,
         _method: &str,
         _params: &[Value],
     ) -> Box<Future<Item=(), Error=Self::Error>> {
-        unreachable!();
+        panic!("This endpoint does not handle notifications");
+    }
+}
+
+impl ServiceBuilder for NoService {
+    type Service = NoService;
+
+    fn build(&self, _client: Client) -> Self {
+        NoService {}
     }
 }
 
@@ -665,7 +678,7 @@ impl Service for NoService {
 ///
 /// If you need a client that handles incoming requests and notifications, implement a `Service`,
 /// and use it with a regular `Connector` (see also:
-/// [`Connector::set_service`](struct.Connector.html#method.set_service))
+/// [`Connector::set_service_builder`](struct.Connector.html#method.set_service_builder))
 ///
 /// `ClientOnlyConnector` is just a wrapper around `Connector` to reduce boilerplate for people who
 /// only need a basic MessagePack-RPC client.
