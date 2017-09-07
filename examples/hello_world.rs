@@ -1,9 +1,9 @@
 //! In this example
-extern crate futures;
-extern crate tokio_core;
-extern crate rmp_rpc;
-extern crate log;
 extern crate env_logger;
+extern crate futures;
+extern crate log;
+extern crate rmp_rpc;
+extern crate tokio_core;
 
 use std::marker::Send;
 use std::{io, thread};
@@ -87,14 +87,14 @@ fn main() {
                 Err(())
             })
             .and_then(|client| {
-                client.request("hello", &["little-dude".into()]).and_then(
-                    |response| {
+                client
+                    .request("hello", &["little-dude".into()])
+                    .and_then(|response| {
                         println!("{:?}", response);
                         client
                             .notify("this should be printed :)", &[])
                             .and_then(|_| Ok(client))
-                    },
-                )
+                    })
             })
             .and_then(|client| {
                 client.request("dummy", &[]).and_then(|response| {

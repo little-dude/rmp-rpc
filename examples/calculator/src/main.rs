@@ -1,7 +1,7 @@
 extern crate futures;
-extern crate tokio_core;
 extern crate rmp_rpc;
 extern crate rmpv;
+extern crate tokio_core;
 
 mod client;
 mod server;
@@ -18,7 +18,6 @@ use client::Client;
 use server::Calculator;
 
 fn main() {
-
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
 
     thread::spawn(move || serve(&addr, &Calculator::new()));

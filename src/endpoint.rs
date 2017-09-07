@@ -342,11 +342,9 @@ where
 
     fn flush(&mut self) {
         match self.stream.get_mut().poll_complete() {
-            Ok(Async::Ready(())) => {
-                if let Some(ref mut client) = self.client {
-                    client.get_mut().acknowledge_notifications();
-                }
-            }
+            Ok(Async::Ready(())) => if let Some(ref mut client) = self.client {
+                client.get_mut().acknowledge_notifications();
+            },
             Ok(Async::NotReady) => return,
             Err(e) => panic!("Failed to flush the sink: {:?}", e),
         }
