@@ -401,7 +401,7 @@ where
 pub trait ServiceBuilder {
     type Service: Service + 'static;
 
-    fn build(&self) -> Self::Service;
+    fn build(&self, client: Client) -> Self::Service;
 }
 
 /// Start a `MessagePack-RPC` server.
@@ -411,7 +411,8 @@ pub fn serve<B: ServiceBuilder>(address: &SocketAddr, service_builder: &B) {
     let listener = TcpListener::bind(address, &handle).unwrap();
     core.run(listener.incoming().for_each(|(stream, _address)| {
         let mut endpoint = Endpoint::new(stream);
-        endpoint.set_server(service_builder.build());
+        let client_proxy = endpoint.set_client();
+        endpoint.set_server(service_builder.build(client_proxy));
         handle.spawn(endpoint.map_err(|_| ()));
         Ok(())
     })).unwrap()
