@@ -422,18 +422,10 @@ pub fn serve<B: ServiceBuilder>(address: &SocketAddr, service_builder: &B) {
 }
 
 /// A client that sends requests and notifications to a remote MessagePack-RPC server.
+#[derive(Clone)]
 pub struct Client {
     requests_tx: RequestTx,
     notifications_tx: NotificationTx,
-}
-
-impl Clone for Client {
-    fn clone(&self) -> Self {
-        Client {
-            requests_tx: self.requests_tx.clone(),
-            notifications_tx: self.notifications_tx.clone(),
-        }
-    }
 }
 
 impl Client {
