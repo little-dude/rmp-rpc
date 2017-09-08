@@ -5,8 +5,7 @@ extern crate rmp_rpc;
 extern crate tokio_core;
 
 use std::marker::Send;
-use std::{io, thread};
-use std::time::Duration;
+use std::io;
 use std::net::SocketAddr;
 
 use futures::{future, Future};
@@ -71,12 +70,12 @@ fn main() {
     env_logger::init().unwrap();
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
 
-    thread::spawn(move || serve(&addr, HelloWorld));
-    thread::sleep(Duration::from_millis(100));
-
     let mut core = Core::new().unwrap();
-    let handle = core.handle();
+    let server = serve(addr, HelloWorld, core.handle());
 
+    core.handle().spawn(server);
+
+    let handle = core.handle();
     let _ = core.run(
         ClientOnlyConnector::new(&addr, &handle)
             .connect()

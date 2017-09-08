@@ -7,8 +7,6 @@ mod client;
 mod server;
 
 use std::net::SocketAddr;
-use std::thread;
-use std::time::Duration;
 
 use futures::Future;
 use rmp_rpc::serve;
@@ -20,11 +18,11 @@ use server::Calculator;
 fn main() {
     env_logger::init().unwrap();
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
-
-    thread::spawn(move || serve(&addr, Calculator::new()));
-    thread::sleep(Duration::from_millis(100));
-
     let mut reactor = Core::new().expect("Failed to start even loop");
+    let handle = reactor.handle();
+
+    reactor.handle().spawn(serve(addr.clone(), Calculator::new(), handle));
+
     let client_future = Client::connect(&addr, &reactor.handle())
         .and_then(|client| {
             println!("connected");

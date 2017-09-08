@@ -5,10 +5,9 @@ extern crate log;
 extern crate rmp_rpc;
 extern crate tokio_core;
 
-use std::{io, thread};
 use std::net::SocketAddr;
+use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use futures::{future, Future};
 use tokio_core::reactor::Core;
@@ -91,15 +90,11 @@ impl ServiceBuilder for PingPong {
 fn main() {
     env_logger::init().unwrap();
 
-    thread::spawn(|| {
-        let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
-        serve(&addr, PingPong::new())
-    });
-    thread::sleep(Duration::from_millis(100));
-
+    let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
     let mut core = Core::new().unwrap();
     let handle = core.handle();
-    let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
+    handle.spawn(serve(addr, PingPong::new(), handle.clone()));
+
     let ping_pong_client = PingPong::new();
     core.run(
         Connector::new(&addr, &handle)

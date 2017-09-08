@@ -8,7 +8,7 @@ use futures::{self, Async, AsyncSink, Canceled, Future, Poll, Sink, StartSend, S
 use futures::sync::{mpsc, oneshot};
 use native_tls::TlsConnector;
 use tokio_core::net::{TcpListener, TcpStream};
-use tokio_core::reactor::{Core, Handle};
+use tokio_core::reactor::Handle;
 use tokio_io::codec::Framed;
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_tls::TlsConnectorExt;
@@ -411,17 +411,23 @@ pub trait ServiceBuilder {
 }
 
 /// Start a `MessagePack-RPC` server.
-pub fn serve<B: ServiceBuilder>(address: &SocketAddr, service_builder: B) {
-    let mut core = Core::new().unwrap();
-    let handle = core.handle();
-    let listener = TcpListener::bind(address, &handle).unwrap();
-    core.run(listener.incoming().for_each(|(stream, _address)| {
-        let mut endpoint = Endpoint::new(stream);
-        let client_proxy = endpoint.set_client();
-        endpoint.set_server(service_builder.build(client_proxy));
-        handle.spawn(endpoint.map_err(|_| ()));
-        Ok(())
-    })).unwrap()
+pub fn serve<B: ServiceBuilder + 'static>(
+    address: SocketAddr,
+    service_builder: B,
+    handle: Handle,
+) -> Box<Future<Item = (), Error = ()>> {
+    let listener = TcpListener::bind(&address, &handle)
+        .unwrap()
+        .incoming()
+        .for_each(move |(stream, _address)| {
+            let mut endpoint = Endpoint::new(stream);
+            let client_proxy = endpoint.set_client();
+            endpoint.set_server(service_builder.build(client_proxy));
+            handle.spawn(endpoint.map_err(|_| ()));
+            Ok(())
+        })
+        .map_err(|_| ());
+    Box::new(listener)
 }
 
 /// A client that sends requests and notifications to a remote MessagePack-RPC server.
