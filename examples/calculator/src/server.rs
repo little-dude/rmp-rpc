@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 use std::io;
 
-use futures::{future, BoxFuture};
-use rmp_rpc::{Service, ServiceBuilder, Value};
+use futures::{future, Future};
+use rmp_rpc::{Client, Service, ServiceBuilder, Value};
 
 #[derive(Clone)]
 pub struct Calculator {
@@ -69,7 +69,7 @@ impl Service for Calculator {
         &mut self,
         method: &str,
         params: &[Value],
-    ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error> {
+    ) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>> {
         let res = match method {
             "add" | "+" => self.add(params).map_err(|e| e.to_string()),
             "sub" | "-" => self.sub(params).map_err(|e| e.to_string()),
@@ -83,7 +83,7 @@ impl Service for Calculator {
         &mut self,
         _method: &str,
         _params: &[Value],
-    ) -> BoxFuture<(), Self::Error> {
+    ) -> Box<Future<Item = (), Error = Self::Error>> {
         unimplemented!();
     }
 }
@@ -91,7 +91,7 @@ impl Service for Calculator {
 impl ServiceBuilder for Calculator {
     type Service = Calculator;
 
-    fn build(&self) -> Self::Service {
+    fn build(&self, _: Client) -> Self::Service {
         println!("server: calculator service called.");
         self.clone()
     }

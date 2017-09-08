@@ -1,6 +1,6 @@
+extern crate env_logger;
 extern crate futures;
 extern crate rmp_rpc;
-extern crate rmpv;
 extern crate tokio_core;
 
 mod client;
@@ -18,6 +18,7 @@ use client::Client;
 use server::Calculator;
 
 fn main() {
+    env_logger::init().unwrap();
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
 
     thread::spawn(move || serve(&addr, &Calculator::new()));

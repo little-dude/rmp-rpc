@@ -8,6 +8,7 @@ version = "0.0.1"
 futures = "0.1.15"
 rmpv = "0.4.0"
 tokio-core = "0.1.9"
+env_logger = "*"
 
 [dependencies.rmp-rpc]
 path = "../.."
