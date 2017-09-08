@@ -728,39 +728,30 @@ impl Connection {
 
         (connection, client_tx, error_tx)
     }
-
-    fn poll_error(&mut self) -> Option<io::Error> {
-        match self.error_rx.poll() {
-            Ok(Async::Ready(e)) => Some(e),
-            Ok(Async::NotReady) => None,
-            // an error means that the remote end of the channel got dropped
-            Err(Canceled) => panic!("errors while polling error channel (client dropped?)"),
-        }
-    }
-
-    fn poll_client(&mut self) -> Option<Client> {
-        match self.client_rx.poll() {
-            Ok(Async::Ready(client)) => Some(client),
-            Ok(Async::NotReady) => None,
-            // an error means that the remote end of the channel got dropped
-            Err(Canceled) => panic!("errors while polling client channel (client dropped?)"),
-        }
-    }
 }
 
 impl Future for Connection {
     type Item = Client;
     type Error = io::Error;
 
+    // FIXME: I'm not sure about the logic is right here.
+    //
+    // Also, it would be *much* nicer to have only one channel that gives us
+    // Result<Client, io::Error> instead of two distinct channels.
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        if let Some(client) = self.poll_client() {
-            trace!("Connection: terminating successfully and returning Client");
-            Ok(Async::Ready(client))
-        } else if let Some(e) = self.poll_error() {
-            trace!("Connection: terminating with an error {}", e);
-            Err(e)
-        } else {
-            Ok(Async::NotReady)
+        match (self.client_rx.poll(), self.error_rx.poll()) {
+            // We have a client, return it
+            (Ok(Async::Ready(client)), _) => Ok(Async::Ready(client)),
+            // We have an error, return it
+            (_, Ok(Async::Ready(e))) => Err(e),
+            // Both channels got closed before we received either an error or a client...
+            // That should not happen so we panic here:
+            (Err(Canceled), Err(Canceled)) => panic!("Failed to poll connection (client dropped?)"),
+            // At least one channel is still not ready. The other one may have errored out already.
+            // Let's wait for the channel that is still active.
+            // I'm not sure this is the right thing to do, because we might wait forever here.
+            // Should we return an error instead?
+            _ => Ok(Async::NotReady),
         }
     }
 }
