@@ -10,7 +10,7 @@ use std::time::Duration;
 use std::net::SocketAddr;
 
 use futures::{future, Future};
-use rmp_rpc::{serve, ClientOnlyConnector, Service, ServiceBuilder, Value, Client};
+use rmp_rpc::{serve, Client, ClientOnlyConnector, Service, ServiceBuilder, Value};
 use tokio_core::reactor::Core;
 
 #[derive(Clone)]
@@ -37,7 +37,7 @@ impl Service for HelloWorld {
         &mut self,
         method: &str,
         params: &[Value],
-    ) -> Box<Future< Item = Result<Self::T, Self::E>, Error = Self::Error>> {
+    ) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>> {
         if method != "hello" {
             return box_ok(Err(format!("Uknown method {}", method)));
         }

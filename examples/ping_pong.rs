@@ -7,7 +7,7 @@ use std::{io, thread};
 use std::time::Duration;
 use std::net::SocketAddr;
 
-use rmp_rpc::{serve, Connector, Service, ServiceBuilder, Value, Client};
+use rmp_rpc::{serve, Client, Connector, Service, ServiceBuilder, Value};
 use tokio_core::reactor::Core;
 use std::sync::{Arc, Mutex};
 
@@ -33,14 +33,23 @@ impl Service for PingPong {
     type E = String;
     type Error = io::Error;
 
-    fn handle_request(&mut self, method: &str, _: &[Value]) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>> {
+    fn handle_request(
+        &mut self,
+        method: &str,
+        _: &[Value],
+    ) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>> {
         let client = self.client.clone();
         match method {
             "ping" => {
-                return Box::new(client.unwrap()
-                    .request("pong", &[])
-                    .and_then(|_result| Ok(Ok(String::new())))
-                    .map_err(|()| { io::Error::new(io::ErrorKind::Other, "The pong request failed") }))
+                return Box::new(
+                    client
+                        .unwrap()
+                        .request("pong", &[])
+                        .and_then(|_result| Ok(Ok(String::new())))
+                        .map_err(|()| {
+                            io::Error::new(io::ErrorKind::Other, "The pong request failed")
+                        }),
+                )
             }
             "pong" => {
                 *self.value.lock().unwrap() += 1;
@@ -53,7 +62,11 @@ impl Service for PingPong {
         }
     }
 
-    fn handle_notification(&mut self, _: &str, _: &[Value],) -> Box<Future<Item = (), Error = Self::Error>> {
+    fn handle_notification(
+        &mut self,
+        _: &str,
+        _: &[Value],
+    ) -> Box<Future<Item = (), Error = Self::Error>> {
         unimplemented!();
     }
 }
@@ -90,11 +103,8 @@ fn main() {
                 Err(())
             })
             .and_then(|client| {
-                client
-                    .request("ping", &[])
-                    .and_then(|_response| {
-                        Ok(())
-                    })
-            })).unwrap();
+                client.request("ping", &[]).and_then(|_response| Ok(()))
+            }),
+    ).unwrap();
     println!("{}", ping_pong_client.value.lock().unwrap());
 }
