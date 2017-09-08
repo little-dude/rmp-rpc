@@ -43,6 +43,7 @@ impl Encoder for Codec {
     type Error = io::Error;
 
     fn encode(&mut self, msg: Self::Item, buf: &mut BytesMut) -> io::Result<()> {
+        buf.reserve(1024);
         Ok(rmpv::encode::write_value(
             &mut buf.writer(),
             &msg.as_value(),
