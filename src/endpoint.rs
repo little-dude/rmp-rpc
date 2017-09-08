@@ -4,7 +4,7 @@ use std::error::Error;
 use std::io;
 use std::net::SocketAddr;
 
-use futures::{Async, AsyncSink, Canceled, Future, Poll, Sink, StartSend, Stream};
+use futures::{self, Async, AsyncSink, Canceled, Future, Poll, Sink, StartSend, Stream};
 use futures::sync::{mpsc, oneshot};
 use native_tls::TlsConnector;
 use tokio_core::net::{TcpListener, TcpStream};
@@ -55,6 +55,7 @@ impl<S: Service> Server<S> {
     }
 
     fn poll_notification_tasks(&mut self) {
+        trace!("Polling pending notification tasks");
         let mut done = vec![];
         for (idx, task) in self.notification_tasks.iter_mut().enumerate() {
             match task.poll().unwrap() {
@@ -68,6 +69,7 @@ impl<S: Service> Server<S> {
     }
 
     fn poll_request_tasks<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
+        trace!("Polling pending requests");
         let mut done = vec![];
         for (id, task) in &mut self.request_tasks {
             match task.poll().unwrap() {
@@ -78,7 +80,6 @@ impl<S: Service> Server<S> {
                     });
                     done.push(*id);
                     stream.send(msg);
-                    // self.send(msg);
                 }
                 Async::NotReady => continue,
             }
@@ -176,50 +177,46 @@ impl InnerClient {
     }
 
     fn process_notifications<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
-        loop {
-            match self.notifications_rx.poll() {
-                Ok(Async::Ready(Some((notification, ack_sender)))) => {
-                    trace!("Got notification from client.");
-                    stream.send(Message::Notification(notification));
-                    self.pending_notifications.push(ack_sender);
-                }
-                Ok(Async::NotReady) => return,
-                Ok(Async::Ready(None)) => {
-                    trace!("Client closed the notifications channel.");
-                    self.shutdown();
-                    return;
-                }
-                Err(()) => {
-                    // I have no idea how this should be handled.
-                    // The documentation does not tell what may trigger an error.
-                    panic!("An error occured while polling the notifications channel.")
-                }
+        trace!("Polling client notifications channel");
+        match self.notifications_rx.poll() {
+            Ok(Async::Ready(Some((notification, ack_sender)))) => {
+                trace!("Got notification from client.");
+                stream.send(Message::Notification(notification));
+                self.pending_notifications.push(ack_sender);
+            }
+            Ok(Async::NotReady) => trace!("No new notification from client"),
+            Ok(Async::Ready(None)) => {
+                trace!("Client closed the notifications channel.");
+                self.shutdown();
+            }
+            Err(()) => {
+                // I have no idea how this should be handled.
+                // The documentation does not tell what may trigger an error.
+                panic!("An error occured while polling the notifications channel.")
             }
         }
     }
 
     fn process_requests<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
-        loop {
-            match self.requests_rx.poll() {
-                Ok(Async::Ready(Some((mut request, response_sender)))) => {
-                    self.request_id += 1;
-                    trace!("Got request from client.");
-                    request.id = self.request_id;
-                    stream.send(Message::Request(request));
-                    self.pending_requests
-                        .insert(self.request_id, response_sender);
-                }
-                Ok(Async::NotReady) => return,
-                Ok(Async::Ready(None)) => {
-                    trace!("Client closed the requests channel.");
-                    self.shutdown();
-                    return;
-                }
-                Err(()) => {
-                    // I have no idea how this should be handled.
-                    // The documentation does not tell what may trigger an error.
-                    panic!("An error occured while polling the requests channel");
-                }
+        trace!("Polling client requests channel");
+        match self.requests_rx.poll() {
+            Ok(Async::Ready(Some((mut request, response_sender)))) => {
+                self.request_id += 1;
+                trace!("Got request from client: {:?}", request);
+                request.id = self.request_id;
+                stream.send(Message::Request(request));
+                self.pending_requests
+                    .insert(self.request_id, response_sender);
+            }
+            Ok(Async::Ready(None)) => {
+                trace!("Client closed the requests channel.");
+                self.shutdown();
+            }
+            Ok(Async::NotReady) => trace!("No new request from client"),
+            Err(()) => {
+                // I have no idea how this should be handled.
+                // The documentation does not tell what may trigger an error.
+                panic!("An error occured while polling the requests channel");
             }
         }
     }
@@ -261,7 +258,7 @@ where
     T: AsyncRead + AsyncWrite,
 {
     fn send(&mut self, message: Message) {
-        trace!(">>> {:?}", message);
+        trace!("Sending {:?}", message);
         match self.start_send(message) {
             Ok(AsyncSink::Ready) => return,
             // FIXME: there should probably be a retry mechanism.
@@ -323,7 +320,7 @@ where
     }
 
     fn handle_message(&mut self, msg: Message) {
-        trace!("<<< {:?}", msg);
+        trace!("Received {:?}", msg);
         match msg {
             Message::Request(request) => if let Some(ref mut server) = self.server {
                 server.get_mut().process_request(request);
@@ -344,6 +341,7 @@ where
     }
 
     fn flush(&mut self) {
+        trace!("Flushing stream");
         match self.stream.get_mut().poll_complete() {
             Ok(Async::Ready(())) => if let Some(ref mut client) = self.client {
                 client.get_mut().acknowledge_notifications();
@@ -362,21 +360,18 @@ where
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        trace!("Processing received messages.");
-        loop {
-            match self.stream.get_mut().poll().unwrap() {
-                Async::Ready(Some(msg)) => self.handle_message(msg),
-                Async::Ready(None) => {
-                    trace!("Stream closed by remote peer.");
-                    // FIXME: not sure if we should still continue sending responses here. Is it
-                    // possible that the client closed the stream only one way and is still waiting
-                    // for response? Not for TCP at least, but maybe for other transport types?
-                    return Ok(Async::Ready(()));
-                }
-                Async::NotReady => break,
+        trace!("Polling stream.");
+        match self.stream.get_mut().poll().unwrap() {
+            Async::Ready(Some(msg)) => self.handle_message(msg),
+            Async::Ready(None) => {
+                trace!("Stream closed by remote peer.");
+                // FIXME: not sure if we should still continue sending responses here. Is it
+                // possible that the client closed the stream only one way and is still waiting
+                // for response? Not for TCP at least, but maybe for other transport types?
+                return Ok(Async::Ready(()));
             }
+            Async::NotReady => trace!("No new message in the stream"),
         }
-        trace!("Done processing received messages.");
 
         if let Some(ref mut server) = self.server {
             let server = server.get_mut();
@@ -400,6 +395,10 @@ where
         }
 
         self.flush();
+
+        trace!("notifying the reactor to reschedule current endpoint for polling");
+        // see https://www.coredump.ch/2017/07/05/understanding-the-tokio-reactor-core/
+        futures::task::current().notify();
         Ok(Async::NotReady)
     }
 }
