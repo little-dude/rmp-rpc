@@ -384,6 +384,7 @@ where
             server.poll_notification_tasks();
         }
 
+        let mut client_shutdown: bool = false;
         if let Some(ref mut client) = self.client {
             let client = client.get_mut();
             let stream = self.stream.get_mut();
@@ -391,8 +392,11 @@ where
             client.process_notifications(stream);
             if client.is_shutting_down() {
                 trace!("Client shut down, exiting");
-                return Ok(Async::Ready(()));
+                client_shutdown = true;
             }
+        }
+        if client_shutdown {
+            self.client = None;
         }
 
         self.flush();
