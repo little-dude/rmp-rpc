@@ -21,7 +21,7 @@ Features
 Examples
 ========
 
-    - [client.rs](examples/client.rs): a simple client
-    - [server.rs](examples/server.rs): a simple server
-    - [Calculator](examples/calculator.rs): a calculator application: the server performs simple arithmetic operations (addition, substraction) and returns the results to the client.
-    - [Ping Pong](examples/ping_pong.rs): an example with endpoints that are both client and server.
+- [client.rs](examples/client.rs): a simple client
+- [server.rs](examples/server.rs): a simple server
+- [Calculator](examples/calculator.rs): a calculator application: the server performs simple arithmetic operations (addition, substraction) and returns the results to the client.
+- [Ping Pong](examples/ping_pong.rs): an example with endpoints that are both client and server.
