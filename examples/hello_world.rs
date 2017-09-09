@@ -1,22 +1,16 @@
 //! In this example
-extern crate futures;
-extern crate tokio_core;
-extern crate rmp_rpc;
-extern crate log;
 extern crate env_logger;
+extern crate futures;
+extern crate rmp_rpc;
+extern crate tokio_core;
 
-
-use rmp_rpc::client::Client;
-use rmp_rpc::server::{serve, Service, ServiceBuilder};
-use rmp_rpc::Value;
-
-use tokio_core::reactor::Core;
 use std::marker::Send;
-use std::{io, thread};
-use std::time::Duration;
+use std::io;
 use std::net::SocketAddr;
-use futures::{future, BoxFuture, Future};
 
+use futures::{future, Future};
+use rmp_rpc::{serve, Client, ClientOnlyConnector, Service, ServiceBuilder, Value};
+use tokio_core::reactor::Core;
 
 #[derive(Clone)]
 pub struct HelloWorld;
@@ -24,12 +18,12 @@ pub struct HelloWorld;
 impl ServiceBuilder for HelloWorld {
     type Service = HelloWorld;
 
-    fn build(&self) -> Self::Service {
+    fn build(&self, _client: Client) -> Self::Service {
         self.clone()
     }
 }
 
-fn box_ok<T: Send + 'static, E: Send + 'static>(t: T) -> BoxFuture<T, E> {
+fn box_ok<T: Send + 'static, E: Send + 'static>(t: T) -> Box<Future<Item = T, Error = E>> {
     Box::new(future::ok(t))
 }
 
@@ -42,7 +36,7 @@ impl Service for HelloWorld {
         &mut self,
         method: &str,
         params: &[Value],
-    ) -> BoxFuture<Result<Self::T, Self::E>, Self::Error> {
+    ) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>> {
         if method != "hello" {
             return box_ok(Err(format!("Uknown method {}", method)));
         }
@@ -66,7 +60,7 @@ impl Service for HelloWorld {
         &mut self,
         method: &str,
         _params: &[Value],
-    ) -> BoxFuture<(), Self::Error> {
+    ) -> Box<Future<Item = (), Error = Self::Error>> {
         // just pring the notification's method name
         box_ok(println!("{}", method))
     }
@@ -76,27 +70,28 @@ fn main() {
     env_logger::init().unwrap();
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
 
-    thread::spawn(move || serve(&addr, &HelloWorld));
-    thread::sleep(Duration::from_millis(100));
-
     let mut core = Core::new().unwrap();
-    let handle = core.handle();
+    let server = serve(addr, HelloWorld, core.handle());
 
+    core.handle().spawn(server);
+
+    let handle = core.handle();
     let _ = core.run(
-        Client::connect(&addr, &handle)
+        ClientOnlyConnector::new(&addr, &handle)
+            .connect()
             .or_else(|e| {
                 println!("Connection to server failed: {}", e);
                 Err(())
             })
             .and_then(|client| {
-                client.request("hello", &["little-dude".into()]).and_then(
-                    |response| {
+                client
+                    .request("hello", &["little-dude".into()])
+                    .and_then(|response| {
                         println!("{:?}", response);
                         client
                             .notify("this should be printed :)", &[])
                             .and_then(|_| Ok(client))
-                    },
-                )
+                    })
             })
             .and_then(|client| {
                 client.request("dummy", &[]).and_then(|response| {

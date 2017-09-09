@@ -49,7 +49,6 @@ impl From<io::Error> for DecodeError {
                 DecodeError::UnknownIo(err)
             }
             _ => DecodeError::UnknownIo(err),
-
         }
     }
 }
