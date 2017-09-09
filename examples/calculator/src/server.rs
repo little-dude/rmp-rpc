@@ -30,19 +30,19 @@ impl Calculator {
     }
 
     fn clear(&self) -> Result<i64, &'static str> {
-        println!("server: clear");
+        println!("server: clear() called");
         let mut value = self.value.lock().unwrap();
         *value = 0;
         Ok(*value)
     }
 
     fn res(&self) -> Result<i64, &'static str> {
-        println!("server: res");
+        println!("server: res() called");
         Ok(*self.value.lock().unwrap())
     }
 
     fn add(&self, params: &[Value]) -> Result<i64, &'static str> {
-        println!("server: add");
+        println!("server: add() called");
         let mut value = self.value.lock().unwrap();
         *value += Self::parse_args(params)?
             .iter()
@@ -51,7 +51,7 @@ impl Calculator {
     }
 
     fn sub(&self, params: &[Value]) -> Result<i64, &'static str> {
-        println!("server: sub");
+        println!("server: sub() called");
         let mut value = self.value.lock().unwrap();
         *value -= Self::parse_args(params)?
             .iter()
@@ -92,7 +92,7 @@ impl ServiceBuilder for Calculator {
     type Service = Calculator;
 
     fn build(&self, _: Client) -> Self::Service {
-        println!("server: calculator service called.");
+        println!("server: building new calculator service.");
         self.clone()
     }
 }
