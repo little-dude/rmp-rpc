@@ -11,7 +11,7 @@ license-file = "LICENSE-MIT"
 name = "rmp-rpc"
 readme = "README.md"
 repository = "https://github.com/little-dude/rmp-rpc"
-version = "0.0.9"
+version = "0.0.10"
 
 [dependencies]
 bytes = "0.4.5"
