@@ -44,7 +44,7 @@ impl Service for Echo {
     ) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>> {
         // If the method is not "echo", return an error.
         if method != "echo" {
-            return box_ok(Err(format!("Uknown method {}", method)));
+            return box_ok(Err(format!("Unknown method {}", method)));
         }
 
         // Take the first parameter, which should be a string, and echo it back
