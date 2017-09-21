@@ -1,6 +1,6 @@
 use errors::*;
 use std::io::{self, Read};
-use rmpv::{encode, decode, Integer, Utf8String, Value};
+use rmpv::{decode, encode, Integer, Utf8String, Value};
 use std::convert::From;
 
 /// Represents a `MessagePack-RPC` message as described in the

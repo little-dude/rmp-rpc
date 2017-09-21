@@ -99,7 +99,7 @@ impl ServiceBuilder for PingPong {
 
     fn build(&self, client: Client) -> Self::Service {
         PingPong {
-            value: self.value.clone(),
+            value: self.value,
             client: Some(client),
         }
     }
