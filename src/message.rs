@@ -1,6 +1,6 @@
 use errors::*;
-use std::io::Read;
-use rmpv::{decode, Integer, Utf8String, Value};
+use std::io::{self, Read};
+use rmpv::{encode, decode, Integer, Utf8String, Value};
 use std::convert::From;
 
 /// Represents a `MessagePack-RPC` message as described in the
@@ -110,17 +110,10 @@ impl Message {
         }
     }
 
-    #[cfg(test)]
-    pub fn pack(&self) -> Vec<u8> {
+    pub fn pack(&self) -> io::Result<Vec<u8>> {
         let mut bytes = vec![];
-        // I guess it's ok to unwrap here? I don't really think this can fail
-        self.encode(&mut bytes).unwrap();
-        bytes
-    }
-
-    #[cfg(test)]
-    fn encode<W: Write>(&self, wr: &mut W) -> io::Result<()> {
-        Ok(rmpv::encode::write_value(wr, &self.as_value())?)
+        encode::write_value(&mut bytes, &self.as_value())?;
+        Ok(bytes)
     }
 }
 

@@ -1,5 +1,4 @@
 use std::io;
-use rmpv;
 use bytes::{BufMut, BytesMut};
 use tokio_io::codec::{Decoder, Encoder};
 use errors::DecodeError;
@@ -43,11 +42,10 @@ impl Encoder for Codec {
     type Error = io::Error;
 
     fn encode(&mut self, msg: Self::Item, buf: &mut BytesMut) -> io::Result<()> {
-        buf.reserve(1024);
-        Ok(rmpv::encode::write_value(
-            &mut buf.writer(),
-            &msg.as_value(),
-        )?)
+        let bytes = msg.pack()?;
+        buf.reserve(bytes.len());
+        buf.put_slice(&bytes);
+        Ok(())
     }
 }
 
