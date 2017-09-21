@@ -1,5 +1,5 @@
 use std::io;
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use tokio_io::codec::{Decoder, Encoder};
 use errors::DecodeError;
 use message::Message;
@@ -43,8 +43,7 @@ impl Encoder for Codec {
 
     fn encode(&mut self, msg: Self::Item, buf: &mut BytesMut) -> io::Result<()> {
         let bytes = msg.pack()?;
-        buf.reserve(bytes.len());
-        buf.put_slice(&bytes);
+        buf.extend_from_slice(&bytes);
         Ok(())
     }
 }
