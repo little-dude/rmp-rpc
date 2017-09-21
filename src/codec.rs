@@ -67,18 +67,24 @@ fn decode() {
     });
 
     // A single message, nothing is left
-    assert_eq!(try_decode(&msg.pack(), b"").unwrap(), Some(msg.clone()));
+    assert_eq!(
+        try_decode(&msg.pack().unwrap(), b"").unwrap(),
+        Some(msg.clone())
+    );
 
     // The first message is decoded, the second stays in the buffer
-    let mut bytes = [&msg.pack()[..], &msg.pack()[..]].concat();
-    assert_eq!(try_decode(&bytes, &msg.pack()).unwrap(), Some(msg.clone()));
+    let mut bytes = [&msg.pack().unwrap()[..], &msg.pack().unwrap()[..]].concat();
+    assert_eq!(
+        try_decode(&bytes, &msg.pack().unwrap()).unwrap(),
+        Some(msg.clone())
+    );
 
     // An incomplete message: nothing gets out and everything stays
-    let packed_msg = msg.pack();
+    let packed_msg = msg.pack().unwrap();
     bytes = Vec::from(&packed_msg[0..packed_msg.len() - 1]);
     assert_eq!(try_decode(&bytes, &bytes).unwrap(), None);
 
     // An invalid message: it gets eaten, and the next message get read.
-    bytes = [&vec![0, 1, 2], &msg.pack()[..]].concat();
+    bytes = [&vec![0, 1, 2], &msg.pack().unwrap()[..]].concat();
     assert_eq!(try_decode(&bytes, b"").unwrap(), Some(msg.clone()));
 }

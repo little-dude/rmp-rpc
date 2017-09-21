@@ -209,11 +209,6 @@ impl Response {
     }
 }
 
-#[cfg(test)]
-use rmpv;
-#[cfg(test)]
-use std::io::{self, Write};
-
 #[test]
 fn test_decode_request() {
     let valid = Message::Request(Request {
@@ -221,7 +216,7 @@ fn test_decode_request() {
         method: "dummy".to_string(),
         params: Vec::new(),
     });
-    let bytes = valid.pack();
+    let bytes = valid.pack().unwrap();
 
     // valid message
     {
