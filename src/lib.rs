@@ -19,9 +19,10 @@ extern crate tokio_tls;
 mod errors;
 mod codec;
 mod message;
+mod net;
 mod endpoint;
 
-pub use endpoint::{serve, Ack, Client, ClientOnlyConnector, Connection, Connector, Response,
-                   Service, ServiceBuilder};
+pub use endpoint::{Ack, Client, Response, Service, ServiceBuilder};
+pub use net::{serve, ClientOnlyConnector, Connection, Connector};
 
 pub use rmpv::{Integer, Utf8String, Value};
