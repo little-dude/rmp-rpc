@@ -356,16 +356,21 @@ where
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         trace!("Polling stream.");
-        match self.stream.get_mut().poll().unwrap() {
-            Async::Ready(Some(msg)) => self.handle_message(msg),
-            Async::Ready(None) => {
-                trace!("Stream closed by remote peer.");
-                // FIXME: not sure if we should still continue sending responses here. Is it
-                // possible that the client closed the stream only one way and is still waiting
-                // for response? Not for TCP at least, but maybe for other transport types?
-                return Ok(Async::Ready(()));
+        loop {
+            match self.stream.get_mut().poll().unwrap() {
+                Async::Ready(Some(msg)) => self.handle_message(msg),
+                Async::Ready(None) => {
+                    trace!("Stream closed by remote peer.");
+                    // FIXME: not sure if we should still continue sending responses here. Is it
+                    // possible that the client closed the stream only one way and is still waiting
+                    // for response? Not for TCP at least, but maybe for other transport types?
+                    return Ok(Async::Ready(()));
+                }
+                Async::NotReady => {
+                    trace!("No new message in the stream");
+                    break;
+                }
             }
-            Async::NotReady => trace!("No new message in the stream"),
         }
 
         if let Some(ref mut server) = self.server {
@@ -391,9 +396,7 @@ where
 
         self.flush();
 
-        trace!("notifying the reactor to reschedule current endpoint for polling");
-        // see https://www.coredump.ch/2017/07/05/understanding-the-tokio-reactor-core/
-        futures::task::current().notify();
+        trace!("notifying the reactor that we're not done yet");
         Ok(Async::NotReady)
     }
 }
