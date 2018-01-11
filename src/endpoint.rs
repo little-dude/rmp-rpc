@@ -173,45 +173,57 @@ impl InnerClient {
 
     fn process_notifications<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
         trace!("Polling client notifications channel");
-        match self.notifications_rx.poll() {
-            Ok(Async::Ready(Some((notification, ack_sender)))) => {
-                trace!("Got notification from client.");
-                stream.send(Message::Notification(notification));
-                self.pending_notifications.push(ack_sender);
-            }
-            Ok(Async::NotReady) => trace!("No new notification from client"),
-            Ok(Async::Ready(None)) => {
-                trace!("Client closed the notifications channel.");
-                self.shutdown();
-            }
-            Err(()) => {
-                // I have no idea how this should be handled.
-                // The documentation does not tell what may trigger an error.
-                panic!("An error occured while polling the notifications channel.")
+        loop {
+            match self.notifications_rx.poll() {
+                Ok(Async::Ready(Some((notification, ack_sender)))) => {
+                    trace!("Got notification from client.");
+                    stream.send(Message::Notification(notification));
+                    self.pending_notifications.push(ack_sender);
+                }
+                Ok(Async::NotReady) => {
+                    trace!("No new notification from client");
+                    break;
+                }
+                Ok(Async::Ready(None)) => {
+                    trace!("Client closed the notifications channel.");
+                    self.shutdown();
+                    break;
+                }
+                Err(()) => {
+                    // I have no idea how this should be handled.
+                    // The documentation does not tell what may trigger an error.
+                    panic!("An error occured while polling the notifications channel.")
+                }
             }
         }
     }
 
     fn process_requests<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
         trace!("Polling client requests channel");
-        match self.requests_rx.poll() {
-            Ok(Async::Ready(Some((mut request, response_sender)))) => {
-                self.request_id += 1;
-                trace!("Got request from client: {:?}", request);
-                request.id = self.request_id;
-                stream.send(Message::Request(request));
-                self.pending_requests
-                    .insert(self.request_id, response_sender);
-            }
-            Ok(Async::Ready(None)) => {
-                trace!("Client closed the requests channel.");
-                self.shutdown();
-            }
-            Ok(Async::NotReady) => trace!("No new request from client"),
-            Err(()) => {
-                // I have no idea how this should be handled.
-                // The documentation does not tell what may trigger an error.
-                panic!("An error occured while polling the requests channel");
+        loop {
+            match self.requests_rx.poll() {
+                Ok(Async::Ready(Some((mut request, response_sender)))) => {
+                    self.request_id += 1;
+                    trace!("Got request from client: {:?}", request);
+                    request.id = self.request_id;
+                    stream.send(Message::Request(request));
+                    self.pending_requests
+                        .insert(self.request_id, response_sender);
+                }
+                Ok(Async::Ready(None)) => {
+                    trace!("Client closed the requests channel.");
+                    self.shutdown();
+                    break;
+                }
+                Ok(Async::NotReady) => {
+                    trace!("No new request from client");
+                    break;
+                }
+                Err(()) => {
+                    // I have no idea how this should be handled.
+                    // The documentation does not tell what may trigger an error.
+                    panic!("An error occured while polling the requests channel");
+                }
             }
         }
     }
