@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::io;
 
-use futures::{self, Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
+use futures::{Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
 use futures::sync::{mpsc, oneshot};
 use tokio_io::codec::Framed;
 use tokio_io::{AsyncRead, AsyncWrite};
