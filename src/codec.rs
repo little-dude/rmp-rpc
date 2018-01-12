@@ -84,6 +84,6 @@ fn decode() {
     assert_eq!(try_decode(&bytes, &bytes).unwrap(), None);
 
     // An invalid message: it gets eaten, and the next message get read.
-    bytes = [&vec![0, 1, 2], &msg.pack().unwrap()[..]].concat();
+    bytes = [&[0, 1, 2], &msg.pack().unwrap()[..]].concat();
     assert_eq!(try_decode(&bytes, b"").unwrap(), Some(msg.clone()));
 }
