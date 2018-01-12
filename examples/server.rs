@@ -80,7 +80,6 @@ impl ServiceBuilder for Echo {
     }
 }
 
-
 fn main() {
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
     // Create a tokio event loop

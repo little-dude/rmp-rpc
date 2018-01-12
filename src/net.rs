@@ -128,12 +128,12 @@ impl<'a, 'b, S: ServiceBuilder + Sync + Send + 'static> Connector<'a, 'b, S> {
         let domain = self.tls.domain.take();
         let tls_handshake = tcp_connection.and_then(move |stream| {
             trace!("TCP connection established. Starting TLS handshake.");
-            let tls_connector =  TlsConnector::builder().unwrap().build().unwrap();
+            let tls_connector = TlsConnector::builder().unwrap().build().unwrap();
             if let Some(domain) = domain {
                 tls_connector.connect_async(&domain, stream)
             } else {
                 tls_connector.danger_connect_async_without_providing_domain_for_certificate_verification_and_server_name_indication(stream)
-            }.map_err(|e| { io::Error::new(io::ErrorKind::Other, e) })
+            }.map_err(|e| io::Error::new(io::ErrorKind::Other, e))
         });
 
         let service_builder = self.service_builder.take();

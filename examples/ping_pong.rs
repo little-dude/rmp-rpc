@@ -63,9 +63,7 @@ impl Service for PingPong {
                     .unwrap()
                     .request("pong", &[id.into()])
                     .and_then(|_result| Ok(Ok(String::new())))
-                    .map_err(|()| {
-                        io::Error::new(io::ErrorKind::Other, "The pong request failed")
-                    });
+                    .map_err(|()| io::Error::new(io::ErrorKind::Other, "The pong request failed"));
 
                 // The response is the result of the an empty string (quite silly but it's just for
                 // the example).
