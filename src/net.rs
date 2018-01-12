@@ -1,12 +1,14 @@
 use futures::{Async, Canceled, Future, Poll, Stream};
 use futures::sync::oneshot;
 use tokio_core::reactor::Handle;
+#[cfg(feature = "tokio-tls")]
 use tokio_tls::TlsConnectorExt;
 use tokio_core::net::{TcpListener, TcpStream};
 use std::net::SocketAddr;
 use rmpv::Value;
 use std::io;
 
+#[cfg(feature = "native-tls")]
 use native_tls::TlsConnector;
 use endpoint::{Client, Endpoint, Service, ServiceBuilder};
 
@@ -30,6 +32,13 @@ pub fn serve<B: ServiceBuilder + 'static>(
     Box::new(listener)
 }
 
+#[cfg(feature = "tls")]
+#[derive(Default)]
+struct TlsOptions {
+    enabled: bool,
+    domain: Option<String>,
+}
+
 /// A `Connector` is used to initiate a connection with a remote `MessagePack-RPC` endpoint.
 /// Establishing the connection consumes the `Connector` and gives a
 /// [`Connection`](struct.Connection.html).
@@ -43,8 +52,7 @@ pub struct Connector<'a, 'b, S> {
     service_builder: Option<S>,
     address: &'a SocketAddr,
     handle: &'b Handle,
-    tls: bool,
-    tls_domain: Option<String>,
+    #[cfg(feature = "tls")] tls: TlsOptions,
 }
 
 impl<'a, 'b, S: ServiceBuilder + Sync + Send + 'static> Connector<'a, 'b, S> {
@@ -54,25 +62,27 @@ impl<'a, 'b, S: ServiceBuilder + Sync + Send + 'static> Connector<'a, 'b, S> {
             service_builder: None,
             address: address,
             handle: handle,
-            tls: false,
-            tls_domain: None,
+            #[cfg(feature = "tls")]
+            tls: Default::default(),
         }
     }
 
     /// Enable TLS for this connection. `domain` is the hostname of the remote endpoint so which we
     /// are connecting.
+    #[cfg(feature = "tls")]
     pub fn set_tls_connector(&mut self, domain: String) -> &mut Self {
-        self.tls = true;
-        self.tls_domain = Some(domain);
+        self.tls.enabled = true;
+        self.tls.domain = Some(domain);
         self
     }
 
     /// Enable TLS for this connection, but without hostname verification. This is dangerous,
     /// because it means that any server with a valid certificate will be trusted. Hence, it is not
     /// recommended.
+    #[cfg(feature = "tls")]
     pub fn set_tls_connector_with_hostname_verification_disabled(&mut self) -> &mut Self {
-        self.tls = true;
-        self.tls_domain = None;
+        self.tls.enabled = true;
+        self.tls.domain = None;
         self
     }
 
@@ -90,19 +100,24 @@ impl<'a, 'b, S: ServiceBuilder + Sync + Send + 'static> Connector<'a, 'b, S> {
 
         let (connection, client_tx, error_tx) = Connection::new();
 
-        if self.tls {
-            let endpoint = self.tls_connect(client_tx, error_tx);
-            self.handle.spawn(endpoint);
-        } else {
-            let endpoint = self.tcp_connect(client_tx, error_tx);
-            self.handle.spawn(endpoint);
+        #[cfg(feature = "tls")]
+        {
+            if self.tls.enabled {
+                let endpoint = self.tls_connect(client_tx, error_tx);
+                self.handle.spawn(endpoint);
+                return connection;
+            }
         }
+
+        let endpoint = self.tcp_connect(client_tx, error_tx);
+        self.handle.spawn(endpoint);
 
         connection
     }
 
     // FIXME: I don't really understand why the return type is BoxFuture<(), ()>
     // I thought is would be BoxFuture<Endpoint<S, TlsStream<TcpStream>>, ()>
+    #[cfg(feature = "tls")]
     fn tls_connect(
         &mut self,
         client_tx: oneshot::Sender<Client>,
@@ -110,7 +125,7 @@ impl<'a, 'b, S: ServiceBuilder + Sync + Send + 'static> Connector<'a, 'b, S> {
     ) -> Box<Future<Item = (), Error = ()>> {
         let tcp_connection = TcpStream::connect(self.address, self.handle);
 
-        let domain = self.tls_domain.take();
+        let domain = self.tls.domain.take();
         let tls_handshake = tcp_connection.and_then(move |stream| {
             trace!("TCP connection established. Starting TLS handshake.");
             let tls_connector =  TlsConnector::builder().unwrap().build().unwrap();
@@ -248,6 +263,7 @@ impl<'a, 'b> ClientOnlyConnector<'a, 'b> {
 
     /// Enable TLS for this connection. `domain` is the hostname of the remote endpoint so which we
     /// are connecting.
+    #[cfg(feature = "tls")]
     pub fn set_tls_connector(&mut self, domain: String) -> &mut Self {
         let _ = self.0.set_tls_connector(domain);
         self
@@ -256,6 +272,7 @@ impl<'a, 'b> ClientOnlyConnector<'a, 'b> {
     /// Enable TLS for this connection, but without hostname verification. This is dangerous,
     /// because it means that any server with a valid certificate will be trusted. Hence, it is not
     /// recommended.
+    #[cfg(feature = "tls")]
     pub fn set_tls_connector_with_hostname_verification_disabled(&mut self) -> &mut Self {
         let _ = self.0
             .set_tls_connector_with_hostname_verification_disabled();
