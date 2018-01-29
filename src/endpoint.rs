@@ -369,7 +369,11 @@ where
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         trace!("Polling stream.");
         loop {
-            match self.stream.get_mut().poll().unwrap() {
+            match self.stream.get_mut().poll().unwrap_or_else(|e| {
+                warn!("Error on stream: {}", e);
+                // Drop this connection on error
+                Async::Ready(None)
+            }) {
                 Async::Ready(Some(msg)) => self.handle_message(msg),
                 Async::Ready(None) => {
                     trace!("Stream closed by remote peer.");
