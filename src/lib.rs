@@ -10,13 +10,9 @@ extern crate bytes;
 extern crate futures;
 #[macro_use]
 extern crate log;
-#[cfg(feature = "native-tls")]
-extern crate native_tls;
 extern crate rmpv;
 extern crate tokio_core;
 extern crate tokio_io;
-#[cfg(feature = "tokio-tls")]
-extern crate tokio_tls;
 
 mod errors;
 mod codec;
