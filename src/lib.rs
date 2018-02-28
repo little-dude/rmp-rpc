@@ -16,11 +16,8 @@ extern crate tokio_io;
 
 mod errors;
 mod codec;
-mod message;
-mod net;
+pub mod message;
 mod endpoint;
 
 pub use endpoint::{Ack, Client, Response, Service, ServiceBuilder};
-pub use net::{serve, ClientOnlyConnector, Connection, Connector};
-
 pub use rmpv::{Integer, Utf8String, Value};

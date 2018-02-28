@@ -3,8 +3,9 @@ use std::io::{self, Read};
 use rmpv::{decode, encode, Integer, Utf8String, Value};
 use std::convert::From;
 
-/// Represents a `MessagePack-RPC` message as described in the
-/// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification)
+/// Represents a `MessagePack-RPC` message as described in the [specifications][specs].
+///
+/// [specs]: (https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification)
 #[derive(PartialEq, Clone, Debug)]
 pub enum Message {
     Request(Request),
@@ -12,28 +13,43 @@ pub enum Message {
     Notification(Notification),
 }
 
-/// Represents a `MessagePack-RPC` request as described in the
-/// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification)
+/// Represents a `MessagePack-RPC` request as described in the [specifications][specs].
+///
+/// A request is a message that a client sends to a server when it expects a response. Sending a
+/// request is like calling a method: it includes a method name and an array of parameters. The
+/// response is like the return value.
 #[derive(PartialEq, Clone, Debug)]
 pub struct Request {
+    /// The `id` is used to associate a response with a request. If a client sends a request with a
+    /// particular `id`, the server should send a response with the same `id`.
     pub id: u32,
+    /// A string representing the method name.
     pub method: String,
+    /// An array of parameters to the method.
     pub params: Vec<Value>,
 }
 
-/// Represents a `MessagePack-RPC` response as described in the
-/// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification)
+/// Represents a `MessagePack-RPC` response as described in the [specifications][specs].
+///
+/// After a client sends a [`Request`], the server will send a response back.
 #[derive(PartialEq, Clone, Debug)]
 pub struct Response {
+    /// The `id` of the [`Request`] that triggered this response.
     pub id: u32,
+    /// The result of the [`Request`] that triggered this response.
     pub result: Result<Value, Value>,
 }
 
-/// Represents a `MessagePack-RPC` notification as described in the
-/// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification)
+/// Represents a `MessagePack-RPC` notification as described in the [specifications][specs].
+///
+/// A notification is a message that a client sends to a server when it doesn't expect a response.
+/// Sending a notification is like calling a method with no return value: the notification includes
+/// a method name and an array of parameters.
 #[derive(PartialEq, Clone, Debug)]
 pub struct Notification {
+    /// A string representing the method name.
     pub method: String,
+    /// An array of parameters to the method.
     pub params: Vec<Value>,
 }
 
