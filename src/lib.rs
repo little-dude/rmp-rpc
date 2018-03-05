@@ -19,5 +19,5 @@ mod codec;
 pub mod message;
 mod endpoint;
 
-pub use endpoint::{Ack, Client, Response, Service, ServiceBuilder};
+pub use endpoint::{Ack, Client, Endpoint, Response, Service, ServiceBuilder};
 pub use rmpv::{Integer, Utf8String, Value};

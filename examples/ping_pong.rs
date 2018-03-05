@@ -15,27 +15,28 @@ extern crate tokio_core;
 
 use std::net::SocketAddr;
 use std::io;
+use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
-use futures::{future, Future};
+use futures::{future, Future, Stream};
 use tokio_core::reactor::Core;
+use tokio_core::net::{TcpListener, TcpStream};
 
-use rmp_rpc::{serve, Client, Connector, Service, ServiceBuilder, Value};
+use rmp_rpc::{Client, Endpoint, Service, Value};
 
 // Our endpoint type
 #[derive(Clone)]
 pub struct PingPong {
     // Number of "pong" received
     pub value: Arc<Mutex<i64>>,
-    // Our type is both a client and server, so we need to store the client
-    pub client: Option<Client>,
+    pub client: Arc<Mutex<Option<Client>>>,
 }
 
 impl PingPong {
     fn new() -> Self {
         PingPong {
             value: Arc::new(Mutex::new(0)),
-            client: None,
+            client: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -52,15 +53,14 @@ impl Service for PingPong {
         method: &str,
         params: &[Value],
     ) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>> {
-        let client = self.client.clone();
         match method {
             // Upon receiving a "ping", send a "pong" back. Note that the future we return
             // finishes only when the "pong" has been answered.
             "ping" => {
                 let id = params[0].as_i64().unwrap();
                 info!("received ping({}), sending pong", id);
-                let request = client
-                    .unwrap()
+                let request =
+                    self.client.lock().unwrap().deref_mut().as_mut().unwrap()
                     .request("pong", &[id.into()])
                     .and_then(|_result| Ok(Ok(String::new())))
                     .map_err(|()| io::Error::new(io::ErrorKind::Other, "The pong request failed"));
@@ -92,17 +92,6 @@ impl Service for PingPong {
     }
 }
 
-impl ServiceBuilder for PingPong {
-    type Service = PingPong;
-
-    fn build(&self, client: Client) -> Self::Service {
-        PingPong {
-            value: Arc::clone(&self.value),
-            client: Some(client),
-        }
-    }
-}
-
 fn main() {
     env_logger::init().unwrap();
 
@@ -110,21 +99,30 @@ fn main() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
-    // Spawn a server on the Tokio event loop
-    handle.spawn(serve(addr, PingPong::new(), handle.clone()));
+    let listener = TcpListener::bind(&addr, &handle).unwrap().incoming();
+    // Spawn a "remote" server on the Tokio event loop
+    handle.spawn(
+        listener
+        .for_each(|(stream, _addr)| {
+            let remote_server = PingPong::new();
+            let remote_client_ref = remote_server.client.clone();
+            let (server, client) = Endpoint::new(stream, remote_server);
+            {
+                *(remote_client_ref.lock().unwrap().deref_mut()) = Some(client.clone());
+            }
+            server
+        })
+        .map_err(|_| ())
+    );
 
     let ping_pong_client = PingPong::new();
+    let pongs = ping_pong_client.value.clone();
     core.run(
-        Connector::new(&addr, &handle)
-            // We want the client to handle the "pong" requests, so we have to set a service
-            // builder. The service will be created during the connection.
-            .set_service_builder(ping_pong_client.clone())
-            .connect()
-            .or_else(|e| {
-                error!("Connection to server failed: {}", e);
-                Err(())
-            })
-            .and_then(|client| {
+        TcpStream::connect(&addr, &handle)
+            .map_err(|_| ())
+            .and_then(|stream| {
+                // Make a "local" client/server pair.
+                let (server, client) = Endpoint::new(stream, ping_pong_client);
                 let mut requests = vec![];
                 for i in 0..10 {
                     requests.push(
@@ -133,8 +131,11 @@ fn main() {
                             .and_then(|_response| Ok(())),
                     );
                 }
-                future::join_all(requests)
-            }),
-    ).unwrap();
-    info!("Received {} pongs", ping_pong_client.value.lock().unwrap());
+
+                // Run all of the requests, along with the "local" server.
+                future::join_all(requests).join(server.map_err(|_| ()))
+            })
+    );
+    info!("Received {} pongs", pongs.lock().unwrap());
 }
+

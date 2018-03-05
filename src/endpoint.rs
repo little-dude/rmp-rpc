@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error::Error;
 use std::io;
@@ -15,6 +14,8 @@ use codec::Codec;
 
 /// The `Service` trait defines how a `MessagePack-RPC` server handles requests and notifications.
 pub trait Service {
+    // TODO: figure out the error handling story here. What's the difference in how we should
+    // handle Error vs E?
     type Error: Error;
     type T: Into<Value>;
     type E: Into<Value>;
@@ -36,7 +37,14 @@ pub trait Service {
 
 struct Server<S: Service> {
     service: S,
+    // These are the futures returned by Service::handle_request, each of which could potentially
+    // represent some long-running computation. We need to make sure that we keep polling them, so
+    // that they keep making progress. When one finishes, it gives back a response that we need to
+    // send back to the client.
+    // TODO: I don't see why this should be a HashMap (as opposed to a vec of pairs)
     request_tasks: HashMap<u32, Box<Future<Item = Result<S::T, S::E>, Error = S::Error>>>,
+    // These are the futures returned by Service::handle_notification, and we need to keep polling
+    // them so that they keep making progress.
     notification_tasks: Vec<Box<Future<Item = (), Error = S::Error>>>,
 }
 
@@ -49,6 +57,9 @@ impl<S: Service> Server<S> {
         }
     }
 
+    // TODO: this would be more efficient using the (currently experimental) drain_filter
+    // It would be even better if we could somehow make the Service in charge of scheduling its own
+    // futures, sending them back to us on a channel.
     fn poll_notification_tasks(&mut self) {
         trace!("Polling pending notification tasks");
         let mut done = vec![];
@@ -63,6 +74,7 @@ impl<S: Service> Server<S> {
         }
     }
 
+    // TODO: this would be more efficient using the (currently experimental) drain_filter
     fn poll_request_tasks<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
         trace!("Polling pending requests");
         let mut done = vec![];
@@ -110,6 +122,7 @@ type AckTx = oneshot::Sender<()>;
 /// guarantees that the server receives it, just that it has been sent.
 pub struct Ack(oneshot::Receiver<()>);
 
+// TODO: perhaps make these bounded (for better backpressure)
 type RequestTx = mpsc::UnboundedSender<(Request, ResponseTx)>;
 type RequestRx = mpsc::UnboundedReceiver<(Request, ResponseTx)>;
 
@@ -253,9 +266,9 @@ impl InnerClient {
 }
 
 pub struct Endpoint<S: Service, T: AsyncRead + AsyncWrite> {
-    stream: RefCell<Transport<T>>,
-    client: Option<RefCell<InnerClient>>,
-    server: Option<RefCell<Server<S>>>,
+    stream: Transport<T>,
+    client: Option<InnerClient>,
+    server: Option<Server<S>>,
 }
 
 struct Transport<T: AsyncRead + AsyncWrite>(Framed<T, Codec>);
@@ -308,39 +321,33 @@ where
     S: Service,
     T: AsyncRead + AsyncWrite,
 {
-    pub fn new(stream: T) -> Self {
-        Endpoint {
-            stream: RefCell::new(Transport(stream.framed(Codec))),
-            client: None,
-            server: None,
-        }
-    }
-
-    pub fn set_server(&mut self, service: S) {
-        self.server = Some(RefCell::new(Server::new(service)));
-    }
-
-    pub fn set_client(&mut self) -> Client {
+    pub fn new(stream: T, service: S) -> (Self, Client) {
         let (client, client_proxy) = InnerClient::new();
-        self.client = Some(RefCell::new(client));
-        client_proxy
+
+        let endpoint = Endpoint {
+            stream: Transport(stream.framed(Codec)),
+            client: Some(client),
+            server: Some(Server::new(service)),
+        };
+
+        (endpoint, client_proxy)
     }
 
     fn handle_message(&mut self, msg: Message) {
         trace!("Received {:?}", msg);
         match msg {
             Message::Request(request) => if let Some(ref mut server) = self.server {
-                server.get_mut().process_request(request);
+                server.process_request(request);
             } else {
                 trace!("This endpoint does not handle requests. Ignoring it.");
             },
             Message::Notification(notification) => if let Some(ref mut server) = self.server {
-                server.get_mut().process_notification(notification);
+                server.process_notification(notification);
             } else {
                 trace!("This endpoint does not handle notifications. Ignoring it.");
             },
             Message::Response(response) => if let Some(ref mut client) = self.client {
-                client.get_mut().process_response(response);
+                client.process_response(response);
             } else {
                 trace!("This endpoint does not handle responses. Ignoring it.");
             },
@@ -349,9 +356,9 @@ where
 
     fn flush(&mut self) {
         trace!("Flushing stream");
-        match self.stream.get_mut().poll_complete() {
+        match self.stream.poll_complete() {
             Ok(Async::Ready(())) => if let Some(ref mut client) = self.client {
-                client.get_mut().acknowledge_notifications();
+                client.acknowledge_notifications();
             },
             Ok(Async::NotReady) => return,
             Err(e) => panic!("Failed to flush the sink: {:?}", e),
@@ -369,7 +376,7 @@ where
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         trace!("Polling stream.");
         loop {
-            match self.stream.get_mut().poll().unwrap_or_else(|e| {
+            match self.stream.poll().unwrap_or_else(|e| {
                 warn!("Error on stream: {}", e);
                 // Drop this connection on error
                 Async::Ready(None)
@@ -390,17 +397,14 @@ where
         }
 
         if let Some(ref mut server) = self.server {
-            let server = server.get_mut();
-            server.poll_request_tasks(self.stream.get_mut());
+            server.poll_request_tasks(&mut self.stream);
             server.poll_notification_tasks();
         }
 
         let mut client_shutdown: bool = false;
         if let Some(ref mut client) = self.client {
-            let client = client.get_mut();
-            let stream = self.stream.get_mut();
-            client.process_requests(stream);
-            client.process_notifications(stream);
+            client.process_requests(&mut self.stream);
+            client.process_notifications(&mut self.stream);
             if client.is_shutting_down() {
                 trace!("Client shut down, exiting");
                 client_shutdown = true;
