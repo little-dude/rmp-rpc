@@ -14,80 +14,81 @@ extern crate rmp_rpc;
 extern crate tokio_core;
 
 use std::net::SocketAddr;
-use std::io;
-use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
 use futures::{future, Future, Stream};
-use tokio_core::reactor::Core;
+use tokio_core::reactor::{Core, Handle};
 use tokio_core::net::{TcpListener, TcpStream};
 
-use rmp_rpc::{Client, Endpoint, Service, Value};
+use rmp_rpc::{Client, Endpoint, ReturnChannel, ServiceWithClient, Value};
 
 // Our endpoint type
 #[derive(Clone)]
 pub struct PingPong {
     // Number of "pong" received
     pub value: Arc<Mutex<i64>>,
-    pub client: Arc<Mutex<Option<Client>>>,
+    handle: Handle,
 }
 
 impl PingPong {
-    fn new() -> Self {
+    fn new(handle: Handle) -> Self {
         PingPong {
             value: Arc::new(Mutex::new(0)),
-            client: Arc::new(Mutex::new(None)),
+            handle: handle,
         }
     }
 }
 
 // Implement how the endpoint handles incoming requests and notifications.
 // In this example, the endpoint does not handle notifications.
-impl Service for PingPong {
+impl ServiceWithClient for PingPong {
     type T = String;
     type E = String;
-    type Error = io::Error;
 
     fn handle_request(
         &mut self,
+        client: &mut Client,
         method: &str,
         params: &[Value],
-    ) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>> {
+        return_channel: ReturnChannel<String, String>,
+    )
+    {
         match method {
-            // Upon receiving a "ping", send a "pong" back. Note that the future we return
-            // finishes only when the "pong" has been answered.
+            // Upon receiving a "ping", send a "pong" back. Only after we get a response back from
+            // "pong", we return the empty string.
             "ping" => {
                 let id = params[0].as_i64().unwrap();
                 info!("received ping({}), sending pong", id);
                 let request =
-                    self.client.lock().unwrap().deref_mut().as_mut().unwrap()
+                    client
                     .request("pong", &[id.into()])
-                    .and_then(|_result| Ok(Ok(String::new())))
-                    .map_err(|()| io::Error::new(io::ErrorKind::Other, "The pong request failed"));
+                    .and_then(move |_result| return_channel.send(Ok(String::new())))
+                    .map_err(|_| ());
 
-                // The response is the result of the an empty string (quite silly but it's just for
-                // the example).
-                Box::new(request)
+                self.handle.spawn(request);
             }
-            // Upon receiving a "pong" increment our pong counter.
+            // Upon receiving a "pong" increment our pong counter and send the empty string back
+            // immediately.
             "pong" => {
                 let id = params[0].as_i64().unwrap();
                 info!("received pong({}), incrementing pong counter", id);
                 *self.value.lock().unwrap() += 1;
-                Box::new(future::ok(Ok(String::new())))
+                return_channel.send(Ok(String::new())).unwrap();
             }
             method => {
                 let err = Err(format!("Invalid method {}", method));
-                Box::new(future::ok(err))
+                return_channel.send(err).unwrap();
             }
         }
     }
 
     fn handle_notification(
         &mut self,
+        _: &mut Client,
         _: &str,
         _: &[Value],
-    ) -> Box<Future<Item = (), Error = Self::Error>> {
+    )
+    {
         unimplemented!();
     }
 }
@@ -100,29 +101,25 @@ fn main() {
     let handle = core.handle();
 
     let listener = TcpListener::bind(&addr, &handle).unwrap().incoming();
-    // Spawn a "remote" server on the Tokio event loop
+    // Spawn a "remote" endpoint on the Tokio event loop
+    let handle_clone = handle.clone();
     handle.spawn(
         listener
-        .for_each(|(stream, _addr)| {
-            let remote_server = PingPong::new();
-            let remote_client_ref = remote_server.client.clone();
-            let (server, client) = Endpoint::new(stream, remote_server);
-            {
-                *(remote_client_ref.lock().unwrap().deref_mut()) = Some(client.clone());
-            }
-            server
+        .for_each(move |(stream, _addr)| {
+            Endpoint::new(stream, PingPong::new(handle_clone.clone()))
         })
         .map_err(|_| ())
     );
 
-    let ping_pong_client = PingPong::new();
+    let ping_pong_client = PingPong::new(handle.clone());
     let pongs = ping_pong_client.value.clone();
     core.run(
         TcpStream::connect(&addr, &handle)
             .map_err(|_| ())
             .and_then(|stream| {
-                // Make a "local" client/server pair.
-                let (server, client) = Endpoint::new(stream, ping_pong_client);
+                // Make a "local" endpoint.
+                let endpoint = Endpoint::new(stream, ping_pong_client);
+                let client = endpoint.client();
                 let mut requests = vec![];
                 for i in 0..10 {
                     requests.push(
@@ -132,10 +129,15 @@ fn main() {
                     );
                 }
 
-                // Run all of the requests, along with the "local" server.
-                future::join_all(requests).join(server.map_err(|_| ()))
+                // Run all of the requests, along with the "local" endpoint.
+                future::join_all(requests)
+                    // The endpoint will never finish, so this is saying that we should terminate
+                    // as soon as all of the requests are finished.
+                    .select2(endpoint.map_err(|_| ()))
+                    .map(|_| ())
+                    .map_err(|_| ())
             })
-    );
-    info!("Received {} pongs", pongs.lock().unwrap());
+    ).unwrap();
+    println!("Received {} pongs", pongs.lock().unwrap());
 }
 

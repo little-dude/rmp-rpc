@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::error::Error;
 use std::io;
 
 use futures::{Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
@@ -12,11 +11,22 @@ use message::{Message, Notification, Request};
 use message::Response as MsgPackResponse;
 use codec::Codec;
 
+#[derive(Debug)]
+pub struct ReturnChannel<T, E> {
+    id: u32,
+    sender: mpsc::UnboundedSender<(u32, Result<T, E>)>,
+}
+
+impl<T, E> ReturnChannel<T, E> {
+    pub fn send(self, result: Result<T, E>) -> Result<(), ()> {
+        // If there is an error sending, it means that the service has stopped. There is no way
+        // that the message is making it back to the client anyway, so just ignore the error.
+        self.sender.unbounded_send((self.id, result)).map_err(|_| ())
+    }
+}
+
 /// The `Service` trait defines how a `MessagePack-RPC` server handles requests and notifications.
 pub trait Service {
-    // TODO: figure out the error handling story here. What's the difference in how we should
-    // handle Error vs E?
-    type Error: Error;
     type T: Into<Value>;
     type E: Into<Value>;
 
@@ -25,90 +35,122 @@ pub trait Service {
         &mut self,
         method: &str,
         params: &[Value],
-    ) -> Box<Future<Item = Result<Self::T, Self::E>, Error = Self::Error>>;
+        return_channel: ReturnChannel<Self::T, Self::E>,
+    );
 
     /// Handle a `MessagePack-RPC` notification.
     fn handle_notification(
         &mut self,
         method: &str,
         params: &[Value],
-    ) -> Box<Future<Item = (), Error = Self::Error>>;
+    );
 }
 
-struct Server<S: Service> {
+pub trait ServiceWithClient {
+    type T: Into<Value>;
+    type E: Into<Value>;
+
+    /// Handle a `MessagePack-RPC` request.
+    fn handle_request(
+        &mut self,
+        client: &mut Client,
+        method: &str,
+        params: &[Value],
+        return_channel: ReturnChannel<Self::T, Self::E>,
+    );
+
+    /// Handle a `MessagePack-RPC` notification.
+    fn handle_notification(
+        &mut self,
+        client: &mut Client,
+        method: &str,
+        params: &[Value],
+    );
+}
+
+// Given a service that doesn't require access to a client, we can also treat it as a service that
+// does require access to a client.
+impl<S: Service> ServiceWithClient for S {
+    type T = <S as Service>::T;
+    type E = <S as Service>::E;
+
+    /// Handle a `MessagePack-RPC` request.
+    fn handle_request(
+        &mut self,
+        _client: &mut Client,
+        method: &str,
+        params: &[Value],
+        return_channel: ReturnChannel<Self::T, Self::E>,
+    )
+    {
+        self.handle_request(method, params, return_channel);
+    }
+
+    /// Handle a `MessagePack-RPC` notification.
+    fn handle_notification(
+        &mut self,
+        _client: &mut Client,
+        method: &str,
+        params: &[Value],
+    )
+    {
+        self.handle_notification(method, params)
+    }
+}
+
+struct Server<S: ServiceWithClient> {
     service: S,
-    // These are the futures returned by Service::handle_request, each of which could potentially
-    // represent some long-running computation. We need to make sure that we keep polling them, so
-    // that they keep making progress. When one finishes, it gives back a response that we need to
-    // send back to the client.
-    // TODO: I don't see why this should be a HashMap (as opposed to a vec of pairs)
-    request_tasks: HashMap<u32, Box<Future<Item = Result<S::T, S::E>, Error = S::Error>>>,
-    // These are the futures returned by Service::handle_notification, and we need to keep polling
-    // them so that they keep making progress.
-    notification_tasks: Vec<Box<Future<Item = (), Error = S::Error>>>,
+    // This will receive responses from the service (or possibly from whatever worker threads that
+    // the service spawned)
+    pending_responses: mpsc::UnboundedReceiver<(u32, Result<S::T, S::E>)>,
+    // We hand out a clone of this whenever we call `service.handle_request`.
+    response_sender: mpsc::UnboundedSender<(u32, Result<S::T, S::E>)>,
+    // TODO: there is not yet any way to enforce backpressure for notifications.
 }
 
-impl<S: Service> Server<S> {
+impl<S: ServiceWithClient> Server<S> {
     fn new(service: S) -> Self {
+        let (send, recv) = mpsc::unbounded();
+
         Server {
             service: service,
-            request_tasks: HashMap::new(),
-            notification_tasks: Vec::new(),
+            pending_responses: recv,
+            response_sender: send,
         }
     }
 
-    // TODO: this would be more efficient using the (currently experimental) drain_filter
-    // It would be even better if we could somehow make the Service in charge of scheduling its own
-    // futures, sending them back to us on a channel.
-    fn poll_notification_tasks(&mut self) {
-        trace!("Polling pending notification tasks");
-        let mut done = vec![];
-        for (idx, task) in self.notification_tasks.iter_mut().enumerate() {
-            match task.poll().unwrap() {
-                Async::Ready(_) => done.push(idx),
-                Async::NotReady => continue,
-            }
-        }
-        for idx in done.iter().rev() {
-            self.notification_tasks.remove(*idx);
-        }
-    }
-
-    // TODO: this would be more efficient using the (currently experimental) drain_filter
-    fn poll_request_tasks<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
-        trace!("Polling pending requests");
-        let mut done = vec![];
-        for (id, task) in &mut self.request_tasks {
-            match task.poll().unwrap() {
-                Async::Ready(response) => {
-                    let msg = Message::Response(MsgPackResponse {
-                        id: *id,
-                        result: response.map(|v| v.into()).map_err(|e| e.into()),
-                    });
-                    done.push(*id);
-                    stream.send(msg);
+    // Pushes all responses (that are ready) onto the stream, to send back to the client.
+    //
+    // Returns Async::Ready if all of the pending responses were successfully sent on their way.
+    // (This does not necessarily mean that they were received yet.)
+    fn send_responses<T: AsyncRead + AsyncWrite>(&mut self, sink: &mut Transport<T>) -> Poll<(), io::Error> {
+        while let Ok(poll) = self.pending_responses.poll() {
+            if let Async::Ready(Some((id, ret))) = poll {
+                let msg = Message::Response(MsgPackResponse {
+                    id: id,
+                    result: ret.map(|v| v.into()).map_err(|e| e.into()),
+                });
+                sink.start_send(msg).unwrap();
+                // FIXME: in futures 0.2, use poll_ready before reasing from pending_responses, and
+                // don't panic here.
+            } else {
+                match poll {
+                    Async::Ready(None) => panic!("we store the sender, it can't be dropped"),
+                    _ => {},
                 }
-                Async::NotReady => continue,
+
+                // We're done pushing all messages into the sink, now try to flush it.
+                return sink.poll_complete();
             }
         }
+        panic!("an UnboundedReceiver should never give an error");
+    }
 
-        for idx in done.iter_mut().rev() {
-            let _ = self.request_tasks.remove(idx);
+    fn return_channel(&self, id: u32) -> ReturnChannel<S::T, S::E> {
+        ReturnChannel {
+            id: id,
+            sender: self.response_sender.clone(),
         }
-    }
-
-    fn process_request(&mut self, request: Request) {
-        let method = request.method.as_str();
-        let params = request.params;
-        let response = self.service.handle_request(method, &params);
-        self.request_tasks.insert(request.id, response);
-    }
-
-    fn process_notification(&mut self, notification: Notification) {
-        let method = notification.method.as_str();
-        let params = notification.params;
-        let task = self.service.handle_notification(method, &params);
-        self.notification_tasks.push(task);
     }
 }
 
@@ -148,7 +190,7 @@ impl Future for Ack {
 }
 
 struct InnerClient {
-    shutting_down: bool,
+    client_closed: bool,
     request_id: u32,
     requests_rx: RequestRx,
     notifications_rx: NotificationRx,
@@ -164,7 +206,7 @@ impl InnerClient {
         let client_proxy = Client::new(requests_tx, notifications_tx);
 
         let client = InnerClient {
-            shutting_down: false,
+            client_closed: false,
             request_id: 0,
             requests_rx: requests_rx,
             notifications_rx: notifications_rx,
@@ -175,16 +217,14 @@ impl InnerClient {
         (client, client_proxy)
     }
 
-    fn shutdown(&mut self) {
-        trace!("Shutting down inner client");
-        self.shutting_down = true;
-    }
-
-    fn is_shutting_down(&self) -> bool {
-        self.shutting_down
-    }
 
     fn process_notifications<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
+        // Don't try to process notifications after the notifications channel was closed, because
+        // trying to read from it might cause panics.
+        if self.client_closed {
+            return;
+        }
+
         trace!("Polling client notifications channel");
         loop {
             match self.notifications_rx.poll() {
@@ -199,7 +239,7 @@ impl InnerClient {
                 }
                 Ok(Async::Ready(None)) => {
                     trace!("Client closed the notifications channel.");
-                    self.shutdown();
+                    self.client_closed = true;
                     break;
                 }
                 Err(()) => {
@@ -211,7 +251,27 @@ impl InnerClient {
         }
     }
 
+    fn send_messages<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>)
+    -> Poll<(), io::Error>
+    {
+        self.process_requests(stream);
+        self.process_notifications(stream);
+
+        match stream.poll_complete()? {
+            Async::Ready(()) => {
+                self.acknowledge_notifications();
+                Ok(Async::Ready(()))
+            },
+            Async::NotReady => Ok(Async::NotReady),
+        }
+    }
+
     fn process_requests<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
+        // Don't try to process requests after the requests channel was closed, because
+        // trying to read from it might cause panics.
+        if self.client_closed {
+            return;
+        }
         trace!("Polling client requests channel");
         loop {
             match self.requests_rx.poll() {
@@ -225,7 +285,7 @@ impl InnerClient {
                 }
                 Ok(Async::Ready(None)) => {
                     trace!("Client closed the requests channel.");
-                    self.shutdown();
+                    self.client_closed = true;
                     break;
                 }
                 Ok(Async::NotReady) => {
@@ -242,9 +302,6 @@ impl InnerClient {
     }
 
     fn process_response(&mut self, response: MsgPackResponse) {
-        if self.is_shutting_down() {
-            return;
-        }
         if let Some(response_tx) = self.pending_requests.remove(&response.id) {
             trace!("Forwarding response to the client.");
             if let Err(e) = response_tx.send(response.result) {
@@ -263,12 +320,6 @@ impl InnerClient {
             }
         }
     }
-}
-
-pub struct Endpoint<S: Service, T: AsyncRead + AsyncWrite> {
-    stream: Transport<T>,
-    client: Option<InnerClient>,
-    server: Option<Server<S>>,
 }
 
 struct Transport<T: AsyncRead + AsyncWrite>(Framed<T, Codec>);
@@ -316,117 +367,354 @@ where
     }
 }
 
+trait MessageHandler {
+    fn handle_incoming(&mut self, msg: Message);
+    fn send_outgoing<T: AsyncRead + AsyncWrite>(&mut self, sink: &mut Transport<T>) -> Poll<(), io::Error>;
+
+    fn is_finished(&self) -> bool { false }
+}
+
+impl<S: Service> MessageHandler for Server<S> {
+    fn handle_incoming(&mut self, msg: Message) {
+        match msg {
+            Message::Request(req) => {
+                let ret = self.return_channel(req.id);
+                self.service.handle_request(&req.method, &req.params, ret);
+            }
+            Message::Notification(note) =>
+                self.service.handle_notification(&note.method, &note.params),
+            Message::Response(_) =>
+                trace!("This endpoint doesn't handle responses, ignoring the msg."),
+        };
+    }
+
+    fn send_outgoing<T: AsyncRead + AsyncWrite>(&mut self, sink: &mut Transport<T>) -> Poll<(), io::Error> {
+        self.send_responses(sink)
+    }
+}
+
+impl MessageHandler for InnerClient {
+    fn handle_incoming(&mut self, msg: Message) {
+        trace!("Received {:?}", msg);
+        if let Message::Response(response) = msg {
+            self.process_response(response);
+        } else {
+            trace!("This endpoint only handles reponses, ignoring the msg.");
+        }
+    }
+
+    fn send_outgoing<T: AsyncRead + AsyncWrite>(&mut self, sink: &mut Transport<T>) -> Poll<(), io::Error> {
+        self.send_messages(sink)
+    }
+
+    fn is_finished(&self) -> bool {
+        self.client_closed
+            && self.pending_requests.is_empty()
+            && self.pending_notifications.is_empty()
+    }
+}
+
+struct ClientAndServer<S: ServiceWithClient> {
+    inner_client: InnerClient,
+    server: Server<S>,
+    client: Client,
+}
+
+impl<S: ServiceWithClient> MessageHandler for ClientAndServer<S> {
+    fn handle_incoming(&mut self, msg: Message) {
+        match msg {
+            Message::Request(req) => {
+                let ret = self.server.return_channel(req.id);
+                self.server.service.handle_request(&mut self.client, &req.method, &req.params, ret);
+            }
+            Message::Notification(note) =>
+                self.server.service.handle_notification(&mut self.client, &note.method, &note.params),
+            Message::Response(response) =>
+                self.inner_client.process_response(response),
+        };
+    }
+
+    fn send_outgoing<T: AsyncRead + AsyncWrite>(&mut self, sink: &mut Transport<T>) -> Poll<(), io::Error> {
+        if let Async::Ready(_) = self.server.send_responses(sink)? {
+            self.inner_client.send_messages(sink)
+        } else {
+            Ok(Async::NotReady)
+        }
+    }
+}
+
+struct InnerEndpoint<MH: MessageHandler, T: AsyncRead + AsyncWrite> {
+    handler: MH,
+    stream: Transport<T>,
+}
+
+impl<MH: MessageHandler, T: AsyncRead + AsyncWrite> Future for InnerEndpoint<MH, T> {
+    type Item = ();
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        // Try to flush out all the responses that are queued up. If this doesn't succeed yet, our
+        // output sink is full. In that case, we'll apply some backpressure to our input stream by
+        // not reading from it.
+        if let Async::NotReady = self.handler.send_outgoing(&mut self.stream)? {
+            trace!("Sink not yet flushed, waiting...");
+            return Ok(Async::NotReady);
+        }
+
+        trace!("Polling stream.");
+        while let Async::Ready(msg) = self.stream.poll()? {
+            if let Some(msg) = msg {
+                self.handler.handle_incoming(msg);
+            } else {
+                trace!("Stream closed by remote peer.");
+                // FIXME: not sure if we should still continue sending responses here. Is it
+                // possible that the client closed the stream only one way and is still waiting
+                // for response? Not for TCP at least, but maybe for other transport types?
+                return Ok(Async::Ready(()));
+            }
+        }
+
+        if self.handler.is_finished() {
+            trace!("inner client finished, exiting...");
+            Ok(Async::Ready(()))
+        } else {
+            trace!("notifying the reactor that we're not done yet");
+            Ok(Async::NotReady)
+        }
+    }
+}
+
+pub struct ClientEndpoint<T: AsyncRead + AsyncWrite> {
+    inner: InnerEndpoint<InnerClient, T>,
+}
+
+impl<T: AsyncRead + AsyncWrite> ClientEndpoint<T> {
+    pub fn new(stream: T) -> (Self, Client) {
+        let (inner_client, client) = InnerClient::new();
+        let endpoint = ClientEndpoint {
+            inner: InnerEndpoint {
+                stream: Transport(stream.framed(Codec)),
+                handler: inner_client,
+            }
+        };
+        (endpoint, client)
+    }
+}
+
+impl<T: AsyncRead + AsyncWrite> Future for ClientEndpoint<T> {
+    type Item = ();
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.inner.poll()
+    }
+}
+
+pub fn serve<'a, S: Service + 'a, T: AsyncRead + AsyncWrite + 'a>(stream: T, service: S)
+-> Box<Future<Item = (), Error = io::Error> + 'a>
+{
+    Box::new(ServerEndpoint::new(stream, service))
+}
+
+pub struct ServerEndpoint<S: Service, T: AsyncRead + AsyncWrite> {
+    inner: InnerEndpoint<Server<S>, T>,
+}
+
+impl<S: Service, T: AsyncRead + AsyncWrite> ServerEndpoint<S, T> {
+    pub fn new(stream: T, service: S) -> Self {
+        ServerEndpoint {
+            inner: InnerEndpoint {
+                stream: Transport(stream.framed(Codec)),
+                handler: Server::new(service),
+            }
+        }
+    }
+}
+
+impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
+    type Item = ();
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.inner.poll()
+    }
+}
+
+pub struct Endpoint<S: ServiceWithClient, T: AsyncRead + AsyncWrite> {
+    inner: InnerEndpoint<ClientAndServer<S>, T>,
+}
+
+impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Endpoint<S, T> {
+    pub fn new(stream: T, service: S) -> Self {
+        let (inner_client, client) = InnerClient::new();
+        Endpoint {
+            inner: InnerEndpoint {
+                stream: Transport(stream.framed(Codec)),
+                handler: ClientAndServer {
+                    inner_client: inner_client,
+                    client: client,
+                    server: Server::new(service),
+                },
+            }
+        }
+    }
+
+    pub fn client(&self) -> Client {
+        self.inner.handler.client.clone()
+    }
+}
+
+
+impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Future for Endpoint<S, T> {
+    type Item = ();
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.inner.poll()
+    }
+}
+
+/*
+pub struct ClientEndpoint<T: AsyncRead + AsyncWrite> {
+    stream: Transport<T>,
+    inner_client: InnerClient,
+}
+
+impl<T: AsyncRead + AsyncWrite> ClientEndpoint<T> {
+    pub fn new(stream: T) -> (Self, Client) {
+        let (inner_client, client) = InnerClient::new();
+        let endpoint = ClientEndpoint {
+            stream: Transport(stream.framed(Codec)),
+            inner_client: inner_client,
+        };
+        (endpoint, client)
+    }
+
+    fn handle_message(&mut self, msg: Message) {
+        trace!("Received {:?}", msg);
+        if let Message::Response(reponse) = msg {
+            self.inner_client.process_response(reponse);
+        } else {
+            trace!("This endpoint only handles reponses, ignoring the msg.");
+        }
+    }
+}
+
+impl<T: AsyncRead + AsyncWrite> Future for ClientEndpoint<T> {
+    type Item = ();
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        // Try to flush out our messages first because backpressure (see Endpoint::poll for more).
+        if let Async::NotReady = self.inner_client.send_messages(&mut self.stream)? {
+            trace!("Sink not yet flushed, waiting...");
+            return Ok(Async::NotReady);
+        }
+
+        trace!("Polling stream.");
+        while let Async::Ready(msg) = self.stream.poll()? {
+            if let Some(msg) = msg {
+                self.handle_message(msg);
+            } else {
+                trace!("Stream closed by remote peer.");
+                // FIXME: not sure if we should still continue sending responses here. Is it
+                // possible that the client closed the stream only one way and is still waiting
+                // for response? Not for TCP at least, but maybe for other transport types?
+                return Ok(Async::Ready(()));
+            }
+        }
+
+        if self.inner_client.is_finished() {
+            trace!("inner client finished, exiting...");
+            Ok(Async::Ready(()))
+        } else {
+            trace!("notifying the reactor that we're not done yet");
+            Ok(Async::NotReady)
+        }
+    }
+}
+
+
+pub struct Endpoint<S: ServiceWithClient, T: AsyncRead + AsyncWrite> {
+    client_endpoint: ClientEndpoint<T>,
+    client: Client,
+    server: Server<S>,
+}
+
 impl<S, T> Endpoint<S, T>
 where
-    S: Service,
+    S: ServiceWithClient,
     T: AsyncRead + AsyncWrite,
 {
-    pub fn new(stream: T, service: S) -> (Self, Client) {
-        let (client, client_proxy) = InnerClient::new();
+    pub fn new(stream: T, service: S) -> Self {
+        let (client_endpoint, client) = ClientEndpoint::new(stream);
 
-        let endpoint = Endpoint {
-            stream: Transport(stream.framed(Codec)),
-            client: Some(client),
-            server: Some(Server::new(service)),
-        };
+        Endpoint {
+            client_endpoint: client_endpoint,
+            client: client,
+            server: Server::new(service),
+        }
+    }
 
-        (endpoint, client_proxy)
+    pub fn client(&self) -> Client {
+        self.client.clone()
     }
 
     fn handle_message(&mut self, msg: Message) {
         trace!("Received {:?}", msg);
         match msg {
-            Message::Request(request) => if let Some(ref mut server) = self.server {
-                server.process_request(request);
-            } else {
-                trace!("This endpoint does not handle requests. Ignoring it.");
-            },
-            Message::Notification(notification) => if let Some(ref mut server) = self.server {
-                server.process_notification(notification);
-            } else {
-                trace!("This endpoint does not handle notifications. Ignoring it.");
-            },
-            Message::Response(response) => if let Some(ref mut client) = self.client {
-                client.process_response(response);
-            } else {
-                trace!("This endpoint does not handle responses. Ignoring it.");
-            },
-        }
-    }
-
-    fn flush(&mut self) {
-        trace!("Flushing stream");
-        match self.stream.poll_complete() {
-            Ok(Async::Ready(())) => if let Some(ref mut client) = self.client {
-                client.acknowledge_notifications();
-            },
-            Ok(Async::NotReady) => return,
-            Err(e) => panic!("Failed to flush the sink: {:?}", e),
+            Message::Request(request) =>
+                self.server.process_request(&mut self.client, request),
+            Message::Notification(notification) =>
+                self.server.process_notification(&mut self.client, notification),
+            Message::Response(response) =>
+                self.client_endpoint.inner_client.process_response(response),
         }
     }
 }
 
 impl<S, T: AsyncRead + AsyncWrite> Future for Endpoint<S, T>
 where
-    S: Service,
+    S: ServiceWithClient,
 {
     type Item = ();
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        // Try to flush out all the responses that are queued up. If this doesn't succeed yet, our
+        // output sink is full. In that case, we'll apply some backpressure to our input stream by
+        // not reading from it.
+        if let Async::NotReady = self.server.send_responses(&mut self.client_endpoint.stream)? {
+            trace!("Sink not yet flushed, waiting...");
+            return Ok(Async::NotReady);
+        }
+
+        // Again, if the client can't manage to send all it's queued messages, apply backpressure.
+        if let Async::NotReady = self.client_endpoint.inner_client.send_messages(&mut self.client_endpoint.stream)? {
+            trace!("Sink not yet flushed, waiting...");
+            return Ok(Async::NotReady);
+        }
+
         trace!("Polling stream.");
-        loop {
-            match self.stream.poll().unwrap_or_else(|e| {
-                warn!("Error on stream: {}", e);
-                // Drop this connection on error
-                Async::Ready(None)
-            }) {
-                Async::Ready(Some(msg)) => self.handle_message(msg),
-                Async::Ready(None) => {
-                    trace!("Stream closed by remote peer.");
-                    // FIXME: not sure if we should still continue sending responses here. Is it
-                    // possible that the client closed the stream only one way and is still waiting
-                    // for response? Not for TCP at least, but maybe for other transport types?
-                    return Ok(Async::Ready(()));
-                }
-                Async::NotReady => {
-                    trace!("No new message in the stream");
-                    break;
-                }
+        while let Async::Ready(msg) = self.client_endpoint.stream.poll()? {
+            if let Some(msg) = msg {
+                self.handle_message(msg);
+            } else {
+                trace!("Stream closed by remote peer.");
+                // FIXME: not sure if we should still continue sending responses here. Is it
+                // possible that the client closed the stream only one way and is still waiting
+                // for response? Not for TCP at least, but maybe for other transport types?
+                return Ok(Async::Ready(()));
             }
         }
 
-        if let Some(ref mut server) = self.server {
-            server.poll_request_tasks(&mut self.stream);
-            server.poll_notification_tasks();
-        }
-
-        let mut client_shutdown: bool = false;
-        if let Some(ref mut client) = self.client {
-            client.process_requests(&mut self.stream);
-            client.process_notifications(&mut self.stream);
-            if client.is_shutting_down() {
-                trace!("Client shut down, exiting");
-                client_shutdown = true;
-            }
-        }
-        if client_shutdown {
-            self.client = None;
-        }
-
-        self.flush();
-
+        // Note that because we own a copy of the Client, there is no need to check whether
+        // InnerClient has finished. (That only happens when its last Client is dropped.)
         trace!("notifying the reactor that we're not done yet");
         Ok(Async::NotReady)
     }
 }
-
-/// A `Service` builder. This trait must be implemented for servers.
-pub trait ServiceBuilder {
-    type Service: Service + 'static;
-
-    fn build(&self, client: Client) -> Self::Service;
-}
+*/
 
 /// A client that sends requests and notifications to a remote MessagePack-RPC server.
 #[derive(Clone)]
