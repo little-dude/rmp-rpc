@@ -154,10 +154,7 @@ impl Notification {
             return Err(DecodeError::Invalid);
         };
 
-        Ok(Notification {
-            method: method,
-            params: params,
-        })
+        Ok(Notification { method, params })
     }
 }
 
@@ -190,11 +187,7 @@ impl Request {
             return Err(DecodeError::Invalid);
         };
 
-        Ok(Request {
-            id: id,
-            method: method,
-            params: params,
-        })
+        Ok(Request { id, method, params })
     }
 }
 
@@ -214,11 +207,11 @@ impl Response {
 
         match array[2] {
             Value::Nil => Ok(Response {
-                id: id,
+                id,
                 result: Ok(array[3].clone()),
             }),
             ref error => Ok(Response {
-                id: id,
+                id,
                 result: Err(error.clone()),
             }),
         }

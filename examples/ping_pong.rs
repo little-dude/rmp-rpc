@@ -34,7 +34,7 @@ impl PingPong {
     fn new(handle: Handle) -> Self {
         PingPong {
             value: Arc::new(Mutex::new(0)),
-            handle: handle,
+            handle,
         }
     }
 }
@@ -51,18 +51,19 @@ impl ServiceWithClient for PingPong {
         method: &str,
         params: &[Value],
         return_channel: ReturnChannel<String, String>,
-    )
-    {
+    ) {
         match method {
             // Upon receiving a "ping", send a "pong" back. Only after we get a response back from
             // "pong", we return the empty string.
             "ping" => {
                 let id = params[0].as_i64().unwrap();
                 info!("received ping({}), sending pong", id);
-                let request =
-                    client
+                let request = client
                     .request("pong", &[id.into()])
-                    .and_then(move |_result| return_channel.send(Ok(String::new())))
+                    .and_then(move |_result| {
+                        return_channel.send(Ok(String::new()));
+                        Ok(())
+                    })
                     .map_err(|_| ());
 
                 self.handle.spawn(request);
@@ -73,22 +74,16 @@ impl ServiceWithClient for PingPong {
                 let id = params[0].as_i64().unwrap();
                 info!("received pong({}), incrementing pong counter", id);
                 *self.value.lock().unwrap() += 1;
-                return_channel.send(Ok(String::new())).unwrap();
+                return_channel.send(Ok(String::new()));
             }
             method => {
                 let err = Err(format!("Invalid method {}", method));
-                return_channel.send(err).unwrap();
+                return_channel.send(err);
             }
         }
     }
 
-    fn handle_notification(
-        &mut self,
-        _: &mut Client,
-        _: &str,
-        _: &[Value],
-    )
-    {
+    fn handle_notification(&mut self, _: &mut Client, _: &str, _: &[Value]) {
         unimplemented!();
     }
 }
@@ -105,10 +100,10 @@ fn main() {
     let handle_clone = handle.clone();
     handle.spawn(
         listener
-        .for_each(move |(stream, _addr)| {
-            Endpoint::new(stream, PingPong::new(handle_clone.clone()))
-        })
-        .map_err(|_| ())
+            .for_each(move |(stream, _addr)| {
+                Endpoint::new(stream, PingPong::new(handle_clone.clone()))
+            })
+            .map_err(|_| ()),
     );
 
     let ping_pong_client = PingPong::new(handle.clone());
@@ -136,8 +131,7 @@ fn main() {
                     .select2(endpoint.map_err(|_| ()))
                     .map(|_| ())
                     .map_err(|_| ())
-            })
+            }),
     ).unwrap();
     println!("Received {} pongs", pongs.lock().unwrap());
 }
-

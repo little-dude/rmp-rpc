@@ -40,20 +40,20 @@ impl Service for Echo {
         // computation on another thread, and have that computation be in charge of sending back
         // the result.
         if method != "echo" {
-            return_channel.send(Err(format!("Unknown method {}", method))).unwrap();
+            return_channel.send(Err(format!("Unknown method {}", method)));
             return;
         }
 
         // Take the first parameter, which should be a string, and echo it back
         if let Value::String(ref string) = params[0] {
             if let Some(text) = string.as_str() {
-                return_channel.send(Ok(text.into())).unwrap();
+                return_channel.send(Ok(text.into()));
                 return;
             }
         }
 
         // If we reach this point, return an error, that means the first parameter is not a String.
-        return_channel.send(Err("Invalid argument".to_owned())).unwrap();
+        return_channel.send(Err("Invalid argument".to_owned()));
     }
 
     // Define how the server handle notifications.

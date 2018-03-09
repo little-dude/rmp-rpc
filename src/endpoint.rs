@@ -11,6 +11,9 @@ use message::{Message, Notification, Request};
 use message::Response as MsgPackResponse;
 use codec::Codec;
 
+/// A channel for returning responses from a service.
+///
+/// See [`Service::handle_request`] for more details.
 #[derive(Debug)]
 pub struct ReturnChannel<T, E> {
     id: u32,
@@ -18,10 +21,14 @@ pub struct ReturnChannel<T, E> {
 }
 
 impl<T, E> ReturnChannel<T, E> {
-    pub fn send(self, result: Result<T, E>) -> Result<(), ()> {
-        // If there is an error sending, it means that the service has stopped. There is no way
-        // that the message is making it back to the client anyway, so just ignore the error.
-        self.sender.unbounded_send((self.id, result)).map_err(|_| ())
+    /// Sends a response back along the return channel.
+    ///
+    /// Each return channel can only be used once, so this consumes the channel.
+    pub fn send(self, result: Result<T, E>) {
+        // If there is an error sending, it means that the service has stopped. There's no point in
+        // signalling an error because it's impossible anyway to guarantee that the response got
+        // back to the client (unless you ask the client to send a confirmation).
+        let _ = self.sender.unbounded_send((self.id, result));
     }
 }
 
@@ -31,6 +38,19 @@ pub trait Service {
     type E: Into<Value>;
 
     /// Handle a `MessagePack-RPC` request.
+    ///
+    /// The name of the request is `method`, and the parameters are given in `params`. The response
+    /// to the request should be sent along `return_channel`.
+    ///
+    /// Note that this method is called synchronously within the main event loop, and so it should
+    /// return quickly. If you need to run a longer computation, spawn a new task and give it the
+    /// return channel.
+    ///
+    /// This return channel business might not be the best way of dealing with the issue. A
+    /// previous version had `handle_request` return a Future instead. That was a little awkward
+    /// because it complicated the easy case where the response is immediately available. This
+    /// "return channel" method also has the (potential) advantage of allowing the service to be in
+    /// control of spawning the new task.
     fn handle_request(
         &mut self,
         method: &str,
@@ -39,18 +59,23 @@ pub trait Service {
     );
 
     /// Handle a `MessagePack-RPC` notification.
-    fn handle_notification(
-        &mut self,
-        method: &str,
-        params: &[Value],
-    );
+    ///
+    /// Note that this method is called synchronously within the main event loop, and so it should
+    /// return quickly. If you need to run a longer computation, spawn a new task.
+    fn handle_notification(&mut self, method: &str, params: &[Value]);
 }
 
+/// This is a beefed-up version of [`Service`], in which the various handler methods also get
+/// access to a [`Client`], which allows them to send requests and notifications to the same
+/// msgpack-rpc client that made the original request.
 pub trait ServiceWithClient {
     type T: Into<Value>;
     type E: Into<Value>;
 
     /// Handle a `MessagePack-RPC` request.
+    ///
+    /// This differs from [`Service::handle_request`] in that you also get access to a [`Client`]
+    /// for sending requests and notifications.
     fn handle_request(
         &mut self,
         client: &mut Client,
@@ -60,12 +85,10 @@ pub trait ServiceWithClient {
     );
 
     /// Handle a `MessagePack-RPC` notification.
-    fn handle_notification(
-        &mut self,
-        client: &mut Client,
-        method: &str,
-        params: &[Value],
-    );
+    ///
+    /// This differs from [`Service::handle_notification`] in that you also get access to a
+    /// [`Client`] for sending requests and notifications.
+    fn handle_notification(&mut self, client: &mut Client, method: &str, params: &[Value]);
 }
 
 // Given a service that doesn't require access to a client, we can also treat it as a service that
@@ -81,31 +104,27 @@ impl<S: Service> ServiceWithClient for S {
         method: &str,
         params: &[Value],
         return_channel: ReturnChannel<Self::T, Self::E>,
-    )
-    {
+    ) {
         self.handle_request(method, params, return_channel);
     }
 
     /// Handle a `MessagePack-RPC` notification.
-    fn handle_notification(
-        &mut self,
-        _client: &mut Client,
-        method: &str,
-        params: &[Value],
-    )
-    {
+    fn handle_notification(&mut self, _client: &mut Client, method: &str, params: &[Value]) {
         self.handle_notification(method, params)
     }
 }
 
 struct Server<S: ServiceWithClient> {
     service: S,
-    // This will receive responses from the service (or possibly from whatever worker threads that
-    // the service spawned)
+    // This will receive responses from the service (or possibly from whatever worker tasks that
+    // the service spawned). The u32 contains the id of the request that the response is for.
     pending_responses: mpsc::UnboundedReceiver<(u32, Result<S::T, S::E>)>,
     // We hand out a clone of this whenever we call `service.handle_request`.
     response_sender: mpsc::UnboundedSender<(u32, Result<S::T, S::E>)>,
-    // TODO: there is not yet any way to enforce backpressure for notifications.
+    // TODO: We partially add backpressure by ensuring that the pending responses get sent out
+    // before we accept new requests. However, it could be that there are lots of response
+    // computations out there that haven't sent pending responses yet; we don't yet have a way to
+    // apply backpressure there.
 }
 
 impl<S: ServiceWithClient> Server<S> {
@@ -113,7 +132,7 @@ impl<S: ServiceWithClient> Server<S> {
         let (send, recv) = mpsc::unbounded();
 
         Server {
-            service: service,
+            service,
             pending_responses: recv,
             response_sender: send,
         }
@@ -123,20 +142,22 @@ impl<S: ServiceWithClient> Server<S> {
     //
     // Returns Async::Ready if all of the pending responses were successfully sent on their way.
     // (This does not necessarily mean that they were received yet.)
-    fn send_responses<T: AsyncRead + AsyncWrite>(&mut self, sink: &mut Transport<T>) -> Poll<(), io::Error> {
+    fn send_responses<T: AsyncRead + AsyncWrite>(
+        &mut self,
+        sink: &mut Transport<T>,
+    ) -> Poll<(), io::Error> {
         while let Ok(poll) = self.pending_responses.poll() {
             if let Async::Ready(Some((id, ret))) = poll {
                 let msg = Message::Response(MsgPackResponse {
-                    id: id,
+                    id,
                     result: ret.map(|v| v.into()).map_err(|e| e.into()),
                 });
                 sink.start_send(msg).unwrap();
-                // FIXME: in futures 0.2, use poll_ready before reasing from pending_responses, and
-                // don't panic here.
+            // FIXME: in futures 0.2, use poll_ready before reasing from pending_responses, and
+            // don't panic here.
             } else {
-                match poll {
-                    Async::Ready(None) => panic!("we store the sender, it can't be dropped"),
-                    _ => {},
+                if let Async::Ready(None) = poll {
+                    panic!("we store the sender, it can't be dropped");
                 }
 
                 // We're done pushing all messages into the sink, now try to flush it.
@@ -148,9 +169,30 @@ impl<S: ServiceWithClient> Server<S> {
 
     fn return_channel(&self, id: u32) -> ReturnChannel<S::T, S::E> {
         ReturnChannel {
-            id: id,
+            id,
             sender: self.response_sender.clone(),
         }
+    }
+}
+
+// We need to write three different endpoints: client, server, and client+server. This trait helps
+// us avoid code duplication by defining the two main roles of an endpoint.
+trait MessageHandler {
+    // We just received `msg` on our input stream. Handle it.
+    fn handle_incoming(&mut self, msg: Message);
+
+    // Try to push out all of the outgoing messages (e.g. responses in the case of a server,
+    // notifications+requests in the case of a client) onto the sink. Return Ok(Async::Ready(()))
+    // if we managed to push them all out and flush the sink.
+    fn send_outgoing<T: AsyncRead + AsyncWrite>(
+        &mut self,
+        sink: &mut Transport<T>,
+    ) -> Poll<(), io::Error>;
+
+    // Is the endpoint finished? This is only relevant for clients, since servers and
+    // client+servers will never voluntarily stop.
+    fn is_finished(&self) -> bool {
+        false
     }
 }
 
@@ -208,15 +250,14 @@ impl InnerClient {
         let client = InnerClient {
             client_closed: false,
             request_id: 0,
-            requests_rx: requests_rx,
-            notifications_rx: notifications_rx,
+            requests_rx,
+            notifications_rx,
             pending_requests: HashMap::new(),
             pending_notifications: Vec::new(),
         };
 
         (client, client_proxy)
     }
-
 
     fn process_notifications<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
         // Don't try to process notifications after the notifications channel was closed, because
@@ -251,9 +292,10 @@ impl InnerClient {
         }
     }
 
-    fn send_messages<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>)
-    -> Poll<(), io::Error>
-    {
+    fn send_messages<T: AsyncRead + AsyncWrite>(
+        &mut self,
+        stream: &mut Transport<T>,
+    ) -> Poll<(), io::Error> {
         self.process_requests(stream);
         self.process_notifications(stream);
 
@@ -261,7 +303,7 @@ impl InnerClient {
             Async::Ready(()) => {
                 self.acknowledge_notifications();
                 Ok(Async::Ready(()))
-            },
+            }
             Async::NotReady => Ok(Async::NotReady),
         }
     }
@@ -367,13 +409,6 @@ where
     }
 }
 
-trait MessageHandler {
-    fn handle_incoming(&mut self, msg: Message);
-    fn send_outgoing<T: AsyncRead + AsyncWrite>(&mut self, sink: &mut Transport<T>) -> Poll<(), io::Error>;
-
-    fn is_finished(&self) -> bool { false }
-}
-
 impl<S: Service> MessageHandler for Server<S> {
     fn handle_incoming(&mut self, msg: Message) {
         match msg {
@@ -381,14 +416,19 @@ impl<S: Service> MessageHandler for Server<S> {
                 let ret = self.return_channel(req.id);
                 self.service.handle_request(&req.method, &req.params, ret);
             }
-            Message::Notification(note) =>
-                self.service.handle_notification(&note.method, &note.params),
-            Message::Response(_) =>
-                trace!("This endpoint doesn't handle responses, ignoring the msg."),
+            Message::Notification(note) => {
+                self.service.handle_notification(&note.method, &note.params)
+            }
+            Message::Response(_) => {
+                trace!("This endpoint doesn't handle responses, ignoring the msg.")
+            }
         };
     }
 
-    fn send_outgoing<T: AsyncRead + AsyncWrite>(&mut self, sink: &mut Transport<T>) -> Poll<(), io::Error> {
+    fn send_outgoing<T: AsyncRead + AsyncWrite>(
+        &mut self,
+        sink: &mut Transport<T>,
+    ) -> Poll<(), io::Error> {
         self.send_responses(sink)
     }
 }
@@ -403,13 +443,15 @@ impl MessageHandler for InnerClient {
         }
     }
 
-    fn send_outgoing<T: AsyncRead + AsyncWrite>(&mut self, sink: &mut Transport<T>) -> Poll<(), io::Error> {
+    fn send_outgoing<T: AsyncRead + AsyncWrite>(
+        &mut self,
+        sink: &mut Transport<T>,
+    ) -> Poll<(), io::Error> {
         self.send_messages(sink)
     }
 
     fn is_finished(&self) -> bool {
-        self.client_closed
-            && self.pending_requests.is_empty()
+        self.client_closed && self.pending_requests.is_empty()
             && self.pending_notifications.is_empty()
     }
 }
@@ -425,16 +467,23 @@ impl<S: ServiceWithClient> MessageHandler for ClientAndServer<S> {
         match msg {
             Message::Request(req) => {
                 let ret = self.server.return_channel(req.id);
-                self.server.service.handle_request(&mut self.client, &req.method, &req.params, ret);
+                self.server
+                    .service
+                    .handle_request(&mut self.client, &req.method, &req.params, ret);
             }
-            Message::Notification(note) =>
-                self.server.service.handle_notification(&mut self.client, &note.method, &note.params),
-            Message::Response(response) =>
-                self.inner_client.process_response(response),
+            Message::Notification(note) => self.server.service.handle_notification(
+                &mut self.client,
+                &note.method,
+                &note.params,
+            ),
+            Message::Response(response) => self.inner_client.process_response(response),
         };
     }
 
-    fn send_outgoing<T: AsyncRead + AsyncWrite>(&mut self, sink: &mut Transport<T>) -> Poll<(), io::Error> {
+    fn send_outgoing<T: AsyncRead + AsyncWrite>(
+        &mut self,
+        sink: &mut Transport<T>,
+    ) -> Poll<(), io::Error> {
         if let Async::Ready(_) = self.server.send_responses(sink)? {
             self.inner_client.send_messages(sink)
         } else {
@@ -495,7 +544,7 @@ impl<T: AsyncRead + AsyncWrite> ClientEndpoint<T> {
             inner: InnerEndpoint {
                 stream: Transport(stream.framed(Codec)),
                 handler: inner_client,
-            }
+            },
         };
         (endpoint, client)
     }
@@ -510,9 +559,10 @@ impl<T: AsyncRead + AsyncWrite> Future for ClientEndpoint<T> {
     }
 }
 
-pub fn serve<'a, S: Service + 'a, T: AsyncRead + AsyncWrite + 'a>(stream: T, service: S)
--> Box<Future<Item = (), Error = io::Error> + 'a>
-{
+pub fn serve<'a, S: Service + 'a, T: AsyncRead + AsyncWrite + 'a>(
+    stream: T,
+    service: S,
+) -> Box<Future<Item = (), Error = io::Error> + 'a> {
     Box::new(ServerEndpoint::new(stream, service))
 }
 
@@ -526,7 +576,7 @@ impl<S: Service, T: AsyncRead + AsyncWrite> ServerEndpoint<S, T> {
             inner: InnerEndpoint {
                 stream: Transport(stream.framed(Codec)),
                 handler: Server::new(service),
-            }
+            },
         }
     }
 }
@@ -551,11 +601,11 @@ impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Endpoint<S, T> {
             inner: InnerEndpoint {
                 stream: Transport(stream.framed(Codec)),
                 handler: ClientAndServer {
-                    inner_client: inner_client,
-                    client: client,
+                    inner_client,
+                    client,
                     server: Server::new(service),
                 },
-            }
+            },
         }
     }
 
@@ -563,7 +613,6 @@ impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Endpoint<S, T> {
         self.inner.handler.client.clone()
     }
 }
-
 
 impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Future for Endpoint<S, T> {
     type Item = ();
@@ -573,148 +622,6 @@ impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Future for Endpoint<S, T> 
         self.inner.poll()
     }
 }
-
-/*
-pub struct ClientEndpoint<T: AsyncRead + AsyncWrite> {
-    stream: Transport<T>,
-    inner_client: InnerClient,
-}
-
-impl<T: AsyncRead + AsyncWrite> ClientEndpoint<T> {
-    pub fn new(stream: T) -> (Self, Client) {
-        let (inner_client, client) = InnerClient::new();
-        let endpoint = ClientEndpoint {
-            stream: Transport(stream.framed(Codec)),
-            inner_client: inner_client,
-        };
-        (endpoint, client)
-    }
-
-    fn handle_message(&mut self, msg: Message) {
-        trace!("Received {:?}", msg);
-        if let Message::Response(reponse) = msg {
-            self.inner_client.process_response(reponse);
-        } else {
-            trace!("This endpoint only handles reponses, ignoring the msg.");
-        }
-    }
-}
-
-impl<T: AsyncRead + AsyncWrite> Future for ClientEndpoint<T> {
-    type Item = ();
-    type Error = io::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        // Try to flush out our messages first because backpressure (see Endpoint::poll for more).
-        if let Async::NotReady = self.inner_client.send_messages(&mut self.stream)? {
-            trace!("Sink not yet flushed, waiting...");
-            return Ok(Async::NotReady);
-        }
-
-        trace!("Polling stream.");
-        while let Async::Ready(msg) = self.stream.poll()? {
-            if let Some(msg) = msg {
-                self.handle_message(msg);
-            } else {
-                trace!("Stream closed by remote peer.");
-                // FIXME: not sure if we should still continue sending responses here. Is it
-                // possible that the client closed the stream only one way and is still waiting
-                // for response? Not for TCP at least, but maybe for other transport types?
-                return Ok(Async::Ready(()));
-            }
-        }
-
-        if self.inner_client.is_finished() {
-            trace!("inner client finished, exiting...");
-            Ok(Async::Ready(()))
-        } else {
-            trace!("notifying the reactor that we're not done yet");
-            Ok(Async::NotReady)
-        }
-    }
-}
-
-
-pub struct Endpoint<S: ServiceWithClient, T: AsyncRead + AsyncWrite> {
-    client_endpoint: ClientEndpoint<T>,
-    client: Client,
-    server: Server<S>,
-}
-
-impl<S, T> Endpoint<S, T>
-where
-    S: ServiceWithClient,
-    T: AsyncRead + AsyncWrite,
-{
-    pub fn new(stream: T, service: S) -> Self {
-        let (client_endpoint, client) = ClientEndpoint::new(stream);
-
-        Endpoint {
-            client_endpoint: client_endpoint,
-            client: client,
-            server: Server::new(service),
-        }
-    }
-
-    pub fn client(&self) -> Client {
-        self.client.clone()
-    }
-
-    fn handle_message(&mut self, msg: Message) {
-        trace!("Received {:?}", msg);
-        match msg {
-            Message::Request(request) =>
-                self.server.process_request(&mut self.client, request),
-            Message::Notification(notification) =>
-                self.server.process_notification(&mut self.client, notification),
-            Message::Response(response) =>
-                self.client_endpoint.inner_client.process_response(response),
-        }
-    }
-}
-
-impl<S, T: AsyncRead + AsyncWrite> Future for Endpoint<S, T>
-where
-    S: ServiceWithClient,
-{
-    type Item = ();
-    type Error = io::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        // Try to flush out all the responses that are queued up. If this doesn't succeed yet, our
-        // output sink is full. In that case, we'll apply some backpressure to our input stream by
-        // not reading from it.
-        if let Async::NotReady = self.server.send_responses(&mut self.client_endpoint.stream)? {
-            trace!("Sink not yet flushed, waiting...");
-            return Ok(Async::NotReady);
-        }
-
-        // Again, if the client can't manage to send all it's queued messages, apply backpressure.
-        if let Async::NotReady = self.client_endpoint.inner_client.send_messages(&mut self.client_endpoint.stream)? {
-            trace!("Sink not yet flushed, waiting...");
-            return Ok(Async::NotReady);
-        }
-
-        trace!("Polling stream.");
-        while let Async::Ready(msg) = self.client_endpoint.stream.poll()? {
-            if let Some(msg) = msg {
-                self.handle_message(msg);
-            } else {
-                trace!("Stream closed by remote peer.");
-                // FIXME: not sure if we should still continue sending responses here. Is it
-                // possible that the client closed the stream only one way and is still waiting
-                // for response? Not for TCP at least, but maybe for other transport types?
-                return Ok(Async::Ready(()));
-            }
-        }
-
-        // Note that because we own a copy of the Client, there is no need to check whether
-        // InnerClient has finished. (That only happens when its last Client is dropped.)
-        trace!("notifying the reactor that we're not done yet");
-        Ok(Async::NotReady)
-    }
-}
-*/
 
 /// A client that sends requests and notifications to a remote MessagePack-RPC server.
 #[derive(Clone)]
@@ -726,8 +633,8 @@ pub struct Client {
 impl Client {
     fn new(requests_tx: RequestTx, notifications_tx: NotificationTx) -> Self {
         Client {
-            requests_tx: requests_tx,
-            notifications_tx: notifications_tx,
+            requests_tx,
+            notifications_tx,
         }
     }
     /// Send a `MessagePack-RPC` request
