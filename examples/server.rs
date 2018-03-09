@@ -19,28 +19,18 @@ pub struct Echo;
 
 // The Service trait defines how the server handles incoming requests and notifications.
 impl Service for Echo {
-    // When a request succeeds, the response is a String.
-    type T = String;
-    // When a request fails, the error is a String.
-    type E = String;
-
     // Define how the server handle requests.
     //
     // This server accept requests with the method "echo".
     // It echoes back the first parameter.
     // If the method is not echo, or if the first parameter is not a string, it returns an error.
-    fn handle_request(
-        &mut self,
-        method: &str,
-        params: &[Value],
-        return_channel: ReturnChannel<String, String>,
-    ) {
+    fn handle_request(&mut self, method: &str, params: &[Value], return_channel: ReturnChannel) {
         // If the method is not "echo", return an error. Note that we "return" by sending back a
         // message on the return channel. If we wanted to, we could spawn some long-running
         // computation on another thread, and have that computation be in charge of sending back
         // the result.
         if method != "echo" {
-            return_channel.send(Err(format!("Unknown method {}", method)));
+            return_channel.send(Err(format!("Unknown method {}", method).into()));
             return;
         }
 
@@ -53,7 +43,7 @@ impl Service for Echo {
         }
 
         // If we reach this point, return an error, that means the first parameter is not a String.
-        return_channel.send(Err("Invalid argument".to_owned()));
+        return_channel.send(Err("Invalid argument".into()));
     }
 
     // Define how the server handle notifications.

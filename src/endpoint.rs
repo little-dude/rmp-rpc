@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 use std::collections::HashMap;
 use std::io;
 
@@ -15,16 +17,16 @@ use codec::Codec;
 ///
 /// See [`Service::handle_request`] for more details.
 #[derive(Debug)]
-pub struct ReturnChannel<T, E> {
+pub struct ReturnChannel {
     id: u32,
-    sender: mpsc::UnboundedSender<(u32, Result<T, E>)>,
+    sender: mpsc::UnboundedSender<(u32, Result<Value, Value>)>,
 }
 
-impl<T, E> ReturnChannel<T, E> {
+impl ReturnChannel {
     /// Sends a response back along the return channel.
     ///
     /// Each return channel can only be used once, so this consumes the channel.
-    pub fn send(self, result: Result<T, E>) {
+    pub fn send(self, result: Result<Value, Value>) {
         // If there is an error sending, it means that the service has stopped. There's no point in
         // signalling an error because it's impossible anyway to guarantee that the response got
         // back to the client (unless you ask the client to send a confirmation).
@@ -34,9 +36,6 @@ impl<T, E> ReturnChannel<T, E> {
 
 /// The `Service` trait defines how a `MessagePack-RPC` server handles requests and notifications.
 pub trait Service {
-    type T: Into<Value>;
-    type E: Into<Value>;
-
     /// Handle a `MessagePack-RPC` request.
     ///
     /// The name of the request is `method`, and the parameters are given in `params`. The response
@@ -51,12 +50,7 @@ pub trait Service {
     /// because it complicated the easy case where the response is immediately available. This
     /// "return channel" method also has the (potential) advantage of allowing the service to be in
     /// control of spawning the new task.
-    fn handle_request(
-        &mut self,
-        method: &str,
-        params: &[Value],
-        return_channel: ReturnChannel<Self::T, Self::E>,
-    );
+    fn handle_request(&mut self, method: &str, params: &[Value], return_channel: ReturnChannel);
 
     /// Handle a `MessagePack-RPC` notification.
     ///
@@ -69,9 +63,6 @@ pub trait Service {
 /// access to a [`Client`], which allows them to send requests and notifications to the same
 /// msgpack-rpc client that made the original request.
 pub trait ServiceWithClient {
-    type T: Into<Value>;
-    type E: Into<Value>;
-
     /// Handle a `MessagePack-RPC` request.
     ///
     /// This differs from [`Service::handle_request`] in that you also get access to a [`Client`]
@@ -81,7 +72,7 @@ pub trait ServiceWithClient {
         client: &mut Client,
         method: &str,
         params: &[Value],
-        return_channel: ReturnChannel<Self::T, Self::E>,
+        return_channel: ReturnChannel,
     );
 
     /// Handle a `MessagePack-RPC` notification.
@@ -94,16 +85,13 @@ pub trait ServiceWithClient {
 // Given a service that doesn't require access to a client, we can also treat it as a service that
 // does require access to a client.
 impl<S: Service> ServiceWithClient for S {
-    type T = <S as Service>::T;
-    type E = <S as Service>::E;
-
     /// Handle a `MessagePack-RPC` request.
     fn handle_request(
         &mut self,
         _client: &mut Client,
         method: &str,
         params: &[Value],
-        return_channel: ReturnChannel<Self::T, Self::E>,
+        return_channel: ReturnChannel,
     ) {
         self.handle_request(method, params, return_channel);
     }
@@ -118,9 +106,9 @@ struct Server<S: ServiceWithClient> {
     service: S,
     // This will receive responses from the service (or possibly from whatever worker tasks that
     // the service spawned). The u32 contains the id of the request that the response is for.
-    pending_responses: mpsc::UnboundedReceiver<(u32, Result<S::T, S::E>)>,
+    pending_responses: mpsc::UnboundedReceiver<(u32, Result<Value, Value>)>,
     // We hand out a clone of this whenever we call `service.handle_request`.
-    response_sender: mpsc::UnboundedSender<(u32, Result<S::T, S::E>)>,
+    response_sender: mpsc::UnboundedSender<(u32, Result<Value, Value>)>,
     // TODO: We partially add backpressure by ensuring that the pending responses get sent out
     // before we accept new requests. However, it could be that there are lots of response
     // computations out there that haven't sent pending responses yet; we don't yet have a way to
@@ -147,10 +135,10 @@ impl<S: ServiceWithClient> Server<S> {
         sink: &mut Transport<T>,
     ) -> Poll<(), io::Error> {
         while let Ok(poll) = self.pending_responses.poll() {
-            if let Async::Ready(Some((id, ret))) = poll {
+            if let Async::Ready(Some((id, result))) = poll {
                 let msg = Message::Response(MsgPackResponse {
                     id,
-                    result: ret.map(|v| v.into()).map_err(|e| e.into()),
+                    result,
                 });
                 sink.start_send(msg).unwrap();
             // FIXME: in futures 0.2, use poll_ready before reasing from pending_responses, and
@@ -167,7 +155,7 @@ impl<S: ServiceWithClient> Server<S> {
         panic!("an UnboundedReceiver should never give an error");
     }
 
-    fn return_channel(&self, id: u32) -> ReturnChannel<S::T, S::E> {
+    fn return_channel(&self, id: u32) -> ReturnChannel {
         ReturnChannel {
             id,
             sender: self.response_sender.clone(),
@@ -533,11 +521,21 @@ impl<MH: MessageHandler, T: AsyncRead + AsyncWrite> Future for InnerEndpoint<MH,
     }
 }
 
+/// A `Future` in charge of sending and receiving messages on behalf of a client.
+///
+/// The main way to create a magpack-rpc client is to call [`ClientEndpoint::new`] to make a
+/// `(ClientEndpoint, Client)` pair. The `Client` half of the pair can be used to send requests and
+/// notifications. The `ClientEndpoint` half of the pair needs to be spawned onto a task in order
+/// to do the job of actually pushing the messages out and processing the responses.
+///
+/// TODO: example
 pub struct ClientEndpoint<T: AsyncRead + AsyncWrite> {
     inner: InnerEndpoint<InnerClient, T>,
 }
 
 impl<T: AsyncRead + AsyncWrite> ClientEndpoint<T> {
+    /// Creates a new `ClientEndpoint`, along with a `Client` that can be used to send requests and
+    /// notifications.
     pub fn new(stream: T) -> (Self, Client) {
         let (inner_client, client) = InnerClient::new();
         let endpoint = ClientEndpoint {
@@ -559,6 +557,10 @@ impl<T: AsyncRead + AsyncWrite> Future for ClientEndpoint<T> {
     }
 }
 
+/// Creates a future for running a `Service` on a stream.
+///
+/// The returned future will run until the stream is closed; if the stream encounters an error,
+/// then the future will propagate it and terminate.
 pub fn serve<'a, S: Service + 'a, T: AsyncRead + AsyncWrite + 'a>(
     stream: T,
     service: S,
@@ -566,7 +568,7 @@ pub fn serve<'a, S: Service + 'a, T: AsyncRead + AsyncWrite + 'a>(
     Box::new(ServerEndpoint::new(stream, service))
 }
 
-pub struct ServerEndpoint<S: Service, T: AsyncRead + AsyncWrite> {
+struct ServerEndpoint<S: Service, T: AsyncRead + AsyncWrite> {
     inner: InnerEndpoint<Server<S>, T>,
 }
 
@@ -590,11 +592,24 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
     }
 }
 
+/// A `Future` for running both a client and a server at the same time.
+///
+/// The client part will be provided to the [`ServiceWithClient::handle_request`] and
+/// [`ServiceWithClient::handle_notification`] functions, so that the server can send back requests
+/// and notifications as part of its handling duties. You may also access the client with the
+/// [`client()`] function if you want to send additional requests.
+///
+/// The returned future needs to be spawned onto a task in order to actually run the server (and
+/// the client). It will run until the stream is closed; if the stream encounters an error, the
+/// future will propagate it and terminate.
+///
+/// TODO: example
 pub struct Endpoint<S: ServiceWithClient, T: AsyncRead + AsyncWrite> {
     inner: InnerEndpoint<ClientAndServer<S>, T>,
 }
 
 impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Endpoint<S, T> {
+    /// Creates a new `Endpoint` on `stream`, using `service` to handle requests and notifications.
     pub fn new(stream: T, service: S) -> Self {
         let (inner_client, client) = InnerClient::new();
         Endpoint {
@@ -609,6 +624,8 @@ impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Endpoint<S, T> {
         }
     }
 
+    /// Returns a handle to the client half of this `Endpoint`, which can be used for sending
+    /// requests and notifications.
     pub fn client(&self) -> Client {
         self.inner.handler.client.clone()
     }

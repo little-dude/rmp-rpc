@@ -42,15 +42,12 @@ impl PingPong {
 // Implement how the endpoint handles incoming requests and notifications.
 // In this example, the endpoint does not handle notifications.
 impl ServiceWithClient for PingPong {
-    type T = String;
-    type E = String;
-
     fn handle_request(
         &mut self,
         client: &mut Client,
         method: &str,
         params: &[Value],
-        return_channel: ReturnChannel<String, String>,
+        return_channel: ReturnChannel,
     ) {
         match method {
             // Upon receiving a "ping", send a "pong" back. Only after we get a response back from
@@ -61,7 +58,7 @@ impl ServiceWithClient for PingPong {
                 let request = client
                     .request("pong", &[id.into()])
                     .and_then(move |_result| {
-                        return_channel.send(Ok(String::new()));
+                        return_channel.send(Ok("".into()));
                         Ok(())
                     })
                     .map_err(|_| ());
@@ -74,10 +71,10 @@ impl ServiceWithClient for PingPong {
                 let id = params[0].as_i64().unwrap();
                 info!("received pong({}), incrementing pong counter", id);
                 *self.value.lock().unwrap() += 1;
-                return_channel.send(Ok(String::new()));
+                return_channel.send(Ok("".into()));
             }
             method => {
-                let err = Err(format!("Invalid method {}", method));
+                let err = Err(format!("Invalid method {}", method).into());
                 return_channel.send(err);
             }
         }
