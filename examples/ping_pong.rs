@@ -17,24 +17,22 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use futures::{future, Future, Stream};
-use tokio_core::reactor::{Core, Handle};
+use tokio_core::reactor::Core;
 use tokio_core::net::{TcpListener, TcpStream};
 
-use rmp_rpc::{Client, Endpoint, ReturnChannel, ServiceWithClient, Value};
+use rmp_rpc::{Client, Endpoint, ServiceWithClient, Value};
 
 // Our endpoint type
 #[derive(Clone)]
 pub struct PingPong {
     // Number of "pong" received
     pub value: Arc<Mutex<i64>>,
-    handle: Handle,
 }
 
 impl PingPong {
-    fn new(handle: Handle) -> Self {
+    fn new() -> Self {
         PingPong {
             value: Arc::new(Mutex::new(0)),
-            handle,
         }
     }
 }
@@ -42,13 +40,15 @@ impl PingPong {
 // Implement how the endpoint handles incoming requests and notifications.
 // In this example, the endpoint does not handle notifications.
 impl ServiceWithClient for PingPong {
+    type RequestFuture = Box<Future<Item = Value, Error = Value> + 'static>;
+    type NotificationFuture = Result<(), ()>;
+
     fn handle_request(
         &mut self,
         client: &mut Client,
         method: &str,
         params: &[Value],
-        return_channel: ReturnChannel,
-    ) {
+    ) -> Self::RequestFuture {
         match method {
             // Upon receiving a "ping", send a "pong" back. Only after we get a response back from
             // "pong", we return the empty string.
@@ -57,13 +57,11 @@ impl ServiceWithClient for PingPong {
                 info!("received ping({}), sending pong", id);
                 let request = client
                     .request("pong", &[id.into()])
-                    .and_then(move |_result| {
-                        return_channel.send(Ok("".into()));
-                        Ok(())
-                    })
-                    .map_err(|_| ());
+                    // After we get the "pong" back, send back an empty string.
+                    .and_then(|_| Ok("".into()))
+                    .map_err(|_| "".into());
 
-                self.handle.spawn(request);
+                Box::new(request)
             }
             // Upon receiving a "pong" increment our pong counter and send the empty string back
             // immediately.
@@ -71,16 +69,21 @@ impl ServiceWithClient for PingPong {
                 let id = params[0].as_i64().unwrap();
                 info!("received pong({}), incrementing pong counter", id);
                 *self.value.lock().unwrap() += 1;
-                return_channel.send(Ok("".into()));
+                Box::new(future::ok("".into()))
             }
             method => {
-                let err = Err(format!("Invalid method {}", method).into());
-                return_channel.send(err);
+                let err = format!("Invalid method {}", method).into();
+                Box::new(future::err(err))
             }
         }
     }
 
-    fn handle_notification(&mut self, _: &mut Client, _: &str, _: &[Value]) {
+    fn handle_notification(
+        &mut self,
+        _: &mut Client,
+        _: &str,
+        _: &[Value],
+    ) -> Self::NotificationFuture {
         unimplemented!();
     }
 }
@@ -97,20 +100,18 @@ fn main() {
     let handle_clone = handle.clone();
     handle.spawn(
         listener
-            .for_each(move |(stream, _addr)| {
-                Endpoint::new(stream, PingPong::new(handle_clone.clone()))
-            })
+            .for_each(move |(stream, _addr)| Endpoint::new(stream, PingPong::new(), &handle_clone))
             .map_err(|_| ()),
     );
 
-    let ping_pong_client = PingPong::new(handle.clone());
+    let ping_pong_client = PingPong::new();
     let pongs = ping_pong_client.value.clone();
     core.run(
         TcpStream::connect(&addr, &handle)
             .map_err(|_| ())
             .and_then(|stream| {
                 // Make a "local" endpoint.
-                let endpoint = Endpoint::new(stream, ping_pong_client);
+                let endpoint = Endpoint::new(stream, ping_pong_client, &handle);
                 let client = endpoint.client();
                 let mut requests = vec![];
                 for i in 0..10 {

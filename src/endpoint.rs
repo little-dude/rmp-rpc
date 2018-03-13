@@ -1,10 +1,9 @@
-#![deny(missing_docs)]
-
 use std::collections::HashMap;
 use std::io;
 
-use futures::{Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
+use futures::{Async, AsyncSink, Future, IntoFuture, Poll, Sink, StartSend, Stream};
 use futures::sync::{mpsc, oneshot};
+use tokio_core::reactor;
 use tokio_io::codec::Framed;
 use tokio_io::{AsyncRead, AsyncWrite};
 use rmpv::Value;
@@ -13,56 +12,71 @@ use message::{Message, Notification, Request};
 use message::Response as MsgPackResponse;
 use codec::Codec;
 
-/// A channel for returning responses from a service.
-///
-/// See [`Service::handle_request`] for more details.
-#[derive(Debug)]
-pub struct ReturnChannel {
-    id: u32,
-    sender: mpsc::UnboundedSender<(u32, Result<Value, Value>)>,
+pub trait IntoStaticFuture {
+    type Future: Future<Item = Self::Item, Error = Self::Error> + 'static;
+    type Item;
+    type Error;
+
+    fn into_static_future(self) -> Self::Future;
 }
 
-impl ReturnChannel {
-    /// Sends a response back along the return channel.
-    ///
-    /// Each return channel can only be used once, so this consumes the channel.
-    pub fn send(self, result: Result<Value, Value>) {
-        // If there is an error sending, it means that the service has stopped. There's no point in
-        // signalling an error because it's impossible anyway to guarantee that the response got
-        // back to the client (unless you ask the client to send a confirmation).
-        let _ = self.sender.unbounded_send((self.id, result));
+impl<F: IntoFuture> IntoStaticFuture for F
+where
+    <F as IntoFuture>::Future: 'static,
+{
+    type Future = <F as IntoFuture>::Future;
+    type Item = <F as IntoFuture>::Item;
+    type Error = <F as IntoFuture>::Error;
+
+    fn into_static_future(self) -> Self::Future {
+        self.into_future()
     }
 }
 
 /// The `Service` trait defines how a `MessagePack-RPC` server handles requests and notifications.
 pub trait Service {
+    /// The type of future returned by `handle_request`. This future will be spawned on the event
+    /// loop, and when it is complete then the result will be sent back to the client that made the
+    /// request.
+    ///
+    /// Note that if your `handle_request` method involves only a simple and quick computation,
+    /// then you can set `RequestFut` to `Result<Value, Value>` (which gets turned into a future
+    /// that completes immediately). You only need to use a "real" future if there's some longer
+    /// computation or I/O that needs to be deferred.
+    type RequestFuture: IntoStaticFuture<Item = Value, Error = Value>;
+
+    /// The type of future returned by `handle_notification`. This future will be spawned on the
+    /// event loop and run to completion. The result of the future will be ignored, since there is
+    /// no way to return an error to the client that sent the notification.
+    type NotificationFuture: IntoStaticFuture<Item = (), Error = ()>;
+
     /// Handle a `MessagePack-RPC` request.
     ///
-    /// The name of the request is `method`, and the parameters are given in `params`. The response
-    /// to the request should be sent along `return_channel`.
+    /// The name of the request is `method`, and the parameters are given in `params`.
     ///
     /// Note that this method is called synchronously within the main event loop, and so it should
-    /// return quickly. If you need to run a longer computation, spawn a new task and give it the
-    /// return channel.
-    ///
-    /// This return channel business might not be the best way of dealing with the issue. A
-    /// previous version had `handle_request` return a Future instead. That was a little awkward
-    /// because it complicated the easy case where the response is immediately available. This
-    /// "return channel" method also has the (potential) advantage of allowing the service to be in
-    /// control of spawning the new task.
-    fn handle_request(&mut self, method: &str, params: &[Value], return_channel: ReturnChannel);
+    /// return quickly. If you need to run a longer computation, put it in a future and return it.
+    fn handle_request(&mut self, method: &str, params: &[Value]) -> Self::RequestFuture;
 
     /// Handle a `MessagePack-RPC` notification.
     ///
     /// Note that this method is called synchronously within the main event loop, and so it should
-    /// return quickly. If you need to run a longer computation, spawn a new task.
-    fn handle_notification(&mut self, method: &str, params: &[Value]);
+    /// return quickly. If you need to run a longer computation, put it in a future and return it.
+    fn handle_notification(&mut self, method: &str, params: &[Value]) -> Self::NotificationFuture;
 }
 
 /// This is a beefed-up version of [`Service`], in which the various handler methods also get
 /// access to a [`Client`], which allows them to send requests and notifications to the same
 /// msgpack-rpc client that made the original request.
 pub trait ServiceWithClient {
+    /// The type of future returned by `handle_request`. See [`Service::handle_request`] for more
+    /// information.
+    type RequestFuture: IntoStaticFuture<Item = Value, Error = Value>;
+
+    /// The type of future returned by `handle_notification`. See [`Service::handle_notification`]
+    /// for more information.
+    type NotificationFuture: IntoStaticFuture<Item = (), Error = ()>;
+
     /// Handle a `MessagePack-RPC` request.
     ///
     /// This differs from [`Service::handle_request`] in that you also get access to a [`Client`]
@@ -72,38 +86,51 @@ pub trait ServiceWithClient {
         client: &mut Client,
         method: &str,
         params: &[Value],
-        return_channel: ReturnChannel,
-    );
+    ) -> Self::RequestFuture;
 
     /// Handle a `MessagePack-RPC` notification.
     ///
     /// This differs from [`Service::handle_notification`] in that you also get access to a
     /// [`Client`] for sending requests and notifications.
-    fn handle_notification(&mut self, client: &mut Client, method: &str, params: &[Value]);
+    fn handle_notification(
+        &mut self,
+        client: &mut Client,
+        method: &str,
+        params: &[Value],
+    ) -> Self::NotificationFuture;
 }
 
 // Given a service that doesn't require access to a client, we can also treat it as a service that
 // does require access to a client.
 impl<S: Service> ServiceWithClient for S {
-    /// Handle a `MessagePack-RPC` request.
+    type RequestFuture = <S as Service>::RequestFuture;
+    type NotificationFuture = <S as Service>::NotificationFuture;
+
     fn handle_request(
         &mut self,
         _client: &mut Client,
         method: &str,
         params: &[Value],
-        return_channel: ReturnChannel,
-    ) {
-        self.handle_request(method, params, return_channel);
+    ) -> Self::RequestFuture {
+        self.handle_request(method, params)
     }
 
-    /// Handle a `MessagePack-RPC` notification.
-    fn handle_notification(&mut self, _client: &mut Client, method: &str, params: &[Value]) {
+    fn handle_notification(
+        &mut self,
+        _client: &mut Client,
+        method: &str,
+        params: &[Value],
+    ) -> Self::NotificationFuture {
         self.handle_notification(method, params)
     }
 }
 
 struct Server<S: ServiceWithClient> {
     service: S,
+    // A handle for spawning new futures.
+    // TODO: this will go away once we port to futures 0.2, since then we can spawn from within the
+    // poll function
+    handle: reactor::Handle,
     // This will receive responses from the service (or possibly from whatever worker tasks that
     // the service spawned). The u32 contains the id of the request that the response is for.
     pending_responses: mpsc::UnboundedReceiver<(u32, Result<Value, Value>)>,
@@ -116,11 +143,12 @@ struct Server<S: ServiceWithClient> {
 }
 
 impl<S: ServiceWithClient> Server<S> {
-    fn new(service: S) -> Self {
+    fn new(service: S, handle: &reactor::Handle) -> Self {
         let (send, recv) = mpsc::unbounded();
 
         Server {
             service,
+            handle: handle.clone(),
             pending_responses: recv,
             response_sender: send,
         }
@@ -136,13 +164,10 @@ impl<S: ServiceWithClient> Server<S> {
     ) -> Poll<(), io::Error> {
         while let Ok(poll) = self.pending_responses.poll() {
             if let Async::Ready(Some((id, result))) = poll {
-                let msg = Message::Response(MsgPackResponse {
-                    id,
-                    result,
-                });
+                let msg = Message::Response(MsgPackResponse { id, result });
+                // FIXME: in futures 0.2, use poll_ready before reading from pending_responses, and
+                // don't panic here.
                 sink.start_send(msg).unwrap();
-            // FIXME: in futures 0.2, use poll_ready before reasing from pending_responses, and
-            // don't panic here.
             } else {
                 if let Async::Ready(None) = poll {
                     panic!("we store the sender, it can't be dropped");
@@ -155,11 +180,26 @@ impl<S: ServiceWithClient> Server<S> {
         panic!("an UnboundedReceiver should never give an error");
     }
 
-    fn return_channel(&self, id: u32) -> ReturnChannel {
-        ReturnChannel {
-            id,
-            sender: self.response_sender.clone(),
-        }
+    fn spawn_request_worker<F: Future<Item = Value, Error = Value> + 'static>(
+        &self,
+        id: u32,
+        f: F,
+    ) {
+        // TODO: avoid spawning if the future is already ready.
+        let send = self.response_sender.clone();
+        self.handle.spawn(f.then(move |result| {
+            send.unbounded_send((id, result))
+                    // An error in unbounded_send means that the receiver has been dropped, which
+                    // means that the Server has stopped running. There is no meaningful way to
+                    // signal an error from here (but the client should see an error anyway,
+                    // because its stream will end before it gets a response).
+                    .map_err(|_| ())
+        }));
+    }
+
+    fn spawn_notification_worker<F: Future<Item = (), Error = ()> + 'static>(&self, f: F) {
+        // TODO: avoid spawning if the future is already ready.
+        self.handle.spawn(f);
     }
 }
 
@@ -186,6 +226,7 @@ trait MessageHandler {
 
 type ResponseTx = oneshot::Sender<Result<Value, Value>>;
 /// Future response to a request. It resolved once the response is available.
+// TODO: return an error if the stream has an error
 pub struct Response(oneshot::Receiver<Result<Value, Value>>);
 
 type AckTx = oneshot::Sender<()>;
@@ -401,14 +442,15 @@ impl<S: Service> MessageHandler for Server<S> {
     fn handle_incoming(&mut self, msg: Message) {
         match msg {
             Message::Request(req) => {
-                let ret = self.return_channel(req.id);
-                self.service.handle_request(&req.method, &req.params, ret);
+                let f = self.service.handle_request(&req.method, &req.params);
+                self.spawn_request_worker(req.id, f.into_static_future());
             }
             Message::Notification(note) => {
-                self.service.handle_notification(&note.method, &note.params)
+                let f = self.service.handle_notification(&note.method, &note.params);
+                self.spawn_notification_worker(f.into_static_future());
             }
             Message::Response(_) => {
-                trace!("This endpoint doesn't handle responses, ignoring the msg.")
+                trace!("This endpoint doesn't handle responses, ignoring the msg.");
             }
         };
     }
@@ -454,16 +496,22 @@ impl<S: ServiceWithClient> MessageHandler for ClientAndServer<S> {
     fn handle_incoming(&mut self, msg: Message) {
         match msg {
             Message::Request(req) => {
-                let ret = self.server.return_channel(req.id);
+                let f =
+                    self.server
+                        .service
+                        .handle_request(&mut self.client, &req.method, &req.params);
                 self.server
-                    .service
-                    .handle_request(&mut self.client, &req.method, &req.params, ret);
+                    .spawn_request_worker(req.id, f.into_static_future());
             }
-            Message::Notification(note) => self.server.service.handle_notification(
-                &mut self.client,
-                &note.method,
-                &note.params,
-            ),
+            Message::Notification(note) => {
+                let f = self.server.service.handle_notification(
+                    &mut self.client,
+                    &note.method,
+                    &note.params,
+                );
+                self.server
+                    .spawn_notification_worker(f.into_static_future());
+            }
             Message::Response(response) => self.inner_client.process_response(response),
         };
     }
@@ -564,8 +612,9 @@ impl<T: AsyncRead + AsyncWrite> Future for ClientEndpoint<T> {
 pub fn serve<'a, S: Service + 'a, T: AsyncRead + AsyncWrite + 'a>(
     stream: T,
     service: S,
+    handle: &reactor::Handle,
 ) -> Box<Future<Item = (), Error = io::Error> + 'a> {
-    Box::new(ServerEndpoint::new(stream, service))
+    Box::new(ServerEndpoint::new(stream, service, handle))
 }
 
 struct ServerEndpoint<S: Service, T: AsyncRead + AsyncWrite> {
@@ -573,11 +622,11 @@ struct ServerEndpoint<S: Service, T: AsyncRead + AsyncWrite> {
 }
 
 impl<S: Service, T: AsyncRead + AsyncWrite> ServerEndpoint<S, T> {
-    pub fn new(stream: T, service: S) -> Self {
+    pub fn new(stream: T, service: S, handle: &reactor::Handle) -> Self {
         ServerEndpoint {
             inner: InnerEndpoint {
                 stream: Transport(stream.framed(Codec)),
-                handler: Server::new(service),
+                handler: Server::new(service, handle),
             },
         }
     }
@@ -610,7 +659,7 @@ pub struct Endpoint<S: ServiceWithClient, T: AsyncRead + AsyncWrite> {
 
 impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Endpoint<S, T> {
     /// Creates a new `Endpoint` on `stream`, using `service` to handle requests and notifications.
-    pub fn new(stream: T, service: S) -> Self {
+    pub fn new(stream: T, service: S, handle: &reactor::Handle) -> Self {
         let (inner_client, client) = InnerClient::new();
         Endpoint {
             inner: InnerEndpoint {
@@ -618,7 +667,7 @@ impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Endpoint<S, T> {
                 handler: ClientAndServer {
                     inner_client,
                     client,
-                    server: Server::new(service),
+                    server: Server::new(service, handle),
                 },
             },
         }
