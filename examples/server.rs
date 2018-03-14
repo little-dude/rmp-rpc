@@ -72,7 +72,7 @@ fn main() {
         .incoming()
         // Each time the listener finds a new connection, start up a server to handle it.
         .for_each(move |(stream, _addr)| {
-            serve(stream, Echo, &handle)
+            serve(stream, Echo, handle.clone())
         });
 
     // Run the server on the tokio event loop. This is blocking. Press ^C to stop
