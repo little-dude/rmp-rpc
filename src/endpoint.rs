@@ -183,23 +183,37 @@ impl<S: ServiceWithClient> Server<S> {
     fn spawn_request_worker<F: Future<Item = Value, Error = Value> + 'static>(
         &self,
         id: u32,
-        f: F,
+        mut f: F,
     ) {
-        // TODO: avoid spawning if the future is already ready.
-        let send = self.response_sender.clone();
-        self.handle.spawn(f.then(move |result| {
-            send.unbounded_send((id, result))
-                    // An error in unbounded_send means that the receiver has been dropped, which
-                    // means that the Server has stopped running. There is no meaningful way to
-                    // signal an error from here (but the client should see an error anyway,
-                    // because its stream will end before it gets a response).
-                    .map_err(|_| ())
-        }));
+        // The simplest implementation of this function would just spawn a future immediately, but
+        // as an optimization let's check if the future is immediately ready and avoid spawning in
+        // that case.
+        match f.poll() {
+            Ok(Async::Ready(result)) => {
+                // An error in unbounded_send means that the receiver has been dropped, which
+                // means that the Server has stopped running. There is no meaningful way to
+                // signal an error from here (but the client should see an error anyway,
+                // because its stream will end before it gets a response).
+                let _ = self.response_sender.unbounded_send((id, Ok(result)));
+            }
+            Err(e) => {
+                let _ = self.response_sender.unbounded_send((id, Err(e)));
+            }
+            Ok(Async::NotReady) => {
+                // Ok, we can't avoid it: spawn a future on the event loop.
+                let send = self.response_sender.clone();
+                self.handle.spawn(f.then(move |result| {
+                    send.unbounded_send((id, result))
+                            .map_err(|_| ())
+                }));
+            }
+        }
     }
 
-    fn spawn_notification_worker<F: Future<Item = (), Error = ()> + 'static>(&self, f: F) {
-        // TODO: avoid spawning if the future is already ready.
-        self.handle.spawn(f);
+    fn spawn_notification_worker<F: Future<Item = (), Error = ()> + 'static>(&self, mut f: F) {
+        if let Ok(Async::NotReady) = f.poll() {
+            self.handle.spawn(f);
+        }
     }
 }
 
