@@ -10,7 +10,7 @@ extern crate tokio_core;
 use std::net::SocketAddr;
 
 use futures::Future;
-use rmp_rpc::ClientEndpoint;
+use rmp_rpc::Client;
 use tokio_core::net::TcpStream;
 use tokio_core::reactor::Core;
 
@@ -29,9 +29,8 @@ fn main() {
             println!("I/O error in the client: {}", e);
             Err(())
         })
-        .and_then(|stream| {
-            // Create the client.
-            let (endpoint, client) = ClientEndpoint::new(stream);
+        .and_then(move |stream| {
+            let client = Client::new(stream, &handle);
 
             // Use the client to send a notification.
             // The future returned by client.notify() finishes when the notification
@@ -42,22 +41,12 @@ fn main() {
             // the string "foo" and the integer "42".
             // The future returned by client.request() finishes when the response
             // is received.
-            let response = client
+            client
                 .request("dostuff", &["foo".into(), 42.into()])
                 .and_then(|response| {
                     println!("Response: {:?}", response);
                     Ok(())
-                });
-
-            // In order to actually carry out the work of running the client, we need to execute
-            // the "endpoint" future. It takes care of sending messages along the stream, etc.
-            // We'll join the endpoint to the response, so that we're done whenever both of them
-            // finish.
-            endpoint.map_err(|_| ()).join(response)
-
-            // Note that we're dropping the client here. The endpoint will terminate once the
-            // client is dropped and all the pending requests have been sent and responses have
-            // been received.
+                })
         });
 
     // Run the client

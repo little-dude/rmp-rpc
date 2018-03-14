@@ -202,10 +202,8 @@ impl<S: ServiceWithClient> Server<S> {
             Ok(Async::NotReady) => {
                 // Ok, we can't avoid it: spawn a future on the event loop.
                 let send = self.response_sender.clone();
-                self.handle.spawn(f.then(move |result| {
-                    send.unbounded_send((id, result))
-                            .map_err(|_| ())
-                }));
+                self.handle
+                    .spawn(f.then(move |result| send.unbounded_send((id, result)).map_err(|_| ())));
             }
         }
     }
@@ -240,7 +238,11 @@ trait MessageHandler {
 
 type ResponseTx = oneshot::Sender<Result<Value, Value>>;
 /// Future response to a request. It resolved once the response is available.
-// TODO: return an error if the stream has an error
+///
+/// Note that there are two different kinds of "errors" that can be signalled. If we resolve to an
+/// `Err(Cancelled)`, it means that the connection was closed before a response was received. If we
+/// resolve to `Ok(Async::Ready(Err(value)))`, it means that the server encountered an error when
+/// responding to the request, and it send back an error message.
 pub struct Response(oneshot::Receiver<Result<Value, Value>>);
 
 type AckTx = oneshot::Sender<()>;
@@ -288,7 +290,7 @@ impl InnerClient {
         let (requests_tx, requests_rx) = mpsc::unbounded();
         let (notifications_tx, notifications_rx) = mpsc::unbounded();
 
-        let client_proxy = Client::new(requests_tx, notifications_tx);
+        let client_proxy = Client::from_channels(requests_tx, notifications_tx);
 
         let client = InnerClient {
             client_closed: false,
@@ -583,42 +585,6 @@ impl<MH: MessageHandler, T: AsyncRead + AsyncWrite> Future for InnerEndpoint<MH,
     }
 }
 
-/// A `Future` in charge of sending and receiving messages on behalf of a client.
-///
-/// The main way to create a magpack-rpc client is to call [`ClientEndpoint::new`] to make a
-/// `(ClientEndpoint, Client)` pair. The `Client` half of the pair can be used to send requests and
-/// notifications. The `ClientEndpoint` half of the pair needs to be spawned onto a task in order
-/// to do the job of actually pushing the messages out and processing the responses.
-///
-/// TODO: example
-pub struct ClientEndpoint<T: AsyncRead + AsyncWrite> {
-    inner: InnerEndpoint<InnerClient, T>,
-}
-
-impl<T: AsyncRead + AsyncWrite> ClientEndpoint<T> {
-    /// Creates a new `ClientEndpoint`, along with a `Client` that can be used to send requests and
-    /// notifications.
-    pub fn new(stream: T) -> (Self, Client) {
-        let (inner_client, client) = InnerClient::new();
-        let endpoint = ClientEndpoint {
-            inner: InnerEndpoint {
-                stream: Transport(stream.framed(Codec)),
-                handler: inner_client,
-            },
-        };
-        (endpoint, client)
-    }
-}
-
-impl<T: AsyncRead + AsyncWrite> Future for ClientEndpoint<T> {
-    type Item = ();
-    type Error = io::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.inner.poll()
-    }
-}
-
 /// Creates a future for running a `Service` on a stream.
 ///
 /// The returned future will run until the stream is closed; if the stream encounters an error,
@@ -666,7 +632,77 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 /// the client). It will run until the stream is closed; if the stream encounters an error, the
 /// future will propagate it and terminate.
 ///
-/// TODO: example
+/// ```
+/// extern crate futures;
+/// extern crate rmp_rpc;
+/// extern crate tokio_core;
+///
+/// use futures::{Future, Stream};
+/// use rmp_rpc::ServiceWithClient;
+/// use std::net::SocketAddr;
+/// use tokio_core::net::TcpListener;
+/// use tokio_core::reactor::Core;
+/// # use rmp_rpc::{Client, Endpoint, Value};
+///
+/// struct MyService;
+/// impl ServiceWithClient for MyService {
+/// // ...
+/// # type RequestFuture = Result<Value, Value>;
+/// # type NotificationFuture = Result<(), ()>;
+/// # fn handle_request(&mut self, _: &mut Client, _: &str, _: &[Value]) -> Self::RequestFuture {
+/// #     unimplemented!();
+/// # }
+/// # fn handle_notification(&mut self, _: &mut Client, _: &str, _: &[Value]) -> Self::NotificationFuture {
+/// #     unimplemented!();
+/// # }
+/// }
+///
+/// fn main() {
+///     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
+///     let mut core = Core::new().unwrap();
+///     let handle = core.handle();
+///
+///     // Here's the simplest version: we listen for incoming TCP connections and run an
+///     // endpoint on each one.
+///     let server = TcpListener::bind(&addr, &handle).unwrap()
+///         .incoming()
+///         // Each time the listener finds a new connection, start up an endpoint to handle
+///         // it.
+///         .for_each(move |(stream, _addr)| {
+///             Endpoint::new(stream, MyService, &handle)
+///         });
+///
+///     // Here's an alternative, where we take a handle to the client and spawn the endpoint
+///     // on its own task.
+///     let handle = core.handle();
+///     let addr: SocketAddr = "127.0.0.1:65432".parse().unwrap();
+///     let server = TcpListener::bind(&addr, &handle).unwrap().incoming()
+///         .map_err(|e| println!("error on TcpListener: {}", e))
+///         .for_each(move |(stream, _addr)| {
+///             let end = Endpoint::new(stream, MyService, &handle);
+///             let client = end.client();
+///
+///             // Spawn the endpoint. It will do its own thing, while we can use the client
+///             // to send requests.
+///             handle.spawn(end.map_err(|_| ()));
+///
+///             // Send a request with method name "hello" and argument "world!".
+///             client.request("hello", &["world!".into()])
+///                 .map(|response| println!("{:?}", response))
+///                 .map_err(|e| println!("got an error: {:?}", e))
+///             // We're returning the future that came from `client.request`. This means that
+///             // `server` (and therefore our entire program) will terminate once the
+///             // response is received and the messages are printed. If you wanted to keep
+///             // the endpoint running even after the response is received, you could
+///             // (instead of spawning `end` on its own task) `join` the two futures (i.e.
+///             // `end` and the one returned by `client.request`).
+///         });
+///
+///     // Uncomment this to run the server on the tokio event loop. This is blocking.
+///     // Press ^C to stop
+///     // core.run(server).unwrap();
+/// }
+/// ```
 pub struct Endpoint<S: ServiceWithClient, T: AsyncRead + AsyncWrite> {
     inner: InnerEndpoint<ClientAndServer<S>, T>,
 }
@@ -711,12 +747,74 @@ pub struct Client {
 }
 
 impl Client {
-    fn new(requests_tx: RequestTx, notifications_tx: NotificationTx) -> Self {
+    /// Creates a new `Client` that can be used to send requests and notifications on the given
+    /// stream.
+    ///
+    /// ```
+    /// extern crate futures;
+    /// extern crate rmp_rpc;
+    /// extern crate tokio_core;
+    ///
+    /// use futures::Future;
+    /// use std::net::SocketAddr;
+    /// use rmp_rpc::Client;
+    /// use tokio_core::net::TcpStream;
+    /// use tokio_core::reactor::Core;
+    ///
+    /// fn main() {
+    ///     let mut core = Core::new().unwrap();
+    ///     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
+    ///     let handle = core.handle();
+    ///
+    ///     // Open a TCP connection.
+    ///     let connect = TcpStream::connect(&addr, &handle)
+    ///         .map_err(|e| println!("I/O error: {}", e))
+    ///         // Once we get the connection, start a new client on it.
+    ///         .and_then(move |stream| {
+    ///             let client = Client::new(stream, &handle);
+    ///
+    ///             // Use the client to send a notification.
+    ///             // The future returned by client.notify() finishes when the notification
+    ///             // has been sent, in case we care about that. We can also just drop it.
+    ///             client.notify("hello", &[]);
+    ///
+    ///             // Use the client to send a request with the method "dostuff", and two
+    ///             // parameters: the string "foo" and the integer "42".
+    ///             // The future returned by client.request() finishes when the response
+    ///             // is received.
+    ///             client
+    ///                 .request("dostuff", &["foo".into(), 42.into()])
+    ///                 .and_then(|response| {
+    ///                     println!("Response: {:?}", response);
+    ///                     Ok(())
+    ///                 })
+    ///         });
+    ///     // Uncomment this to run the client, blocking until the response was received and the
+    ///     // message was printed.
+    ///     // core.run(connect).unwrap();
+    /// }
+    /// ```
+    pub fn new<T: AsyncRead + AsyncWrite + 'static>(stream: T, handle: &reactor::Handle) -> Self {
+        let (inner_client, client) = InnerClient::new();
+        let endpoint = InnerEndpoint {
+            stream: Transport(stream.framed(Codec)),
+            handler: inner_client,
+        };
+        // We swallow io::Errors. The client will see an error if it has any outstanding requests
+        // or if it tries to send anything, because the endpoint has terminated.
+        handle.spawn(
+            endpoint.map_err(|e| trace!("Client endpoint closed because of an error: {}", e)),
+        );
+        client
+    }
+
+    fn from_channels(requests_tx: RequestTx, notifications_tx: NotificationTx) -> Self {
         Client {
             requests_tx,
             notifications_tx,
         }
     }
+
     /// Send a `MessagePack-RPC` request
     pub fn request(&self, method: &str, params: &[Value]) -> Response {
         trace!("New request (method={}, params={:?})", method, params);
