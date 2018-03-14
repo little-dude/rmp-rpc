@@ -48,7 +48,7 @@ impl Service for Echo {
         }
 
         // If we reach this point, return an error, that means the first parameter is not a String.
-        return Err("Invalid argument".into());
+        Err("Invalid argument".into())
     }
 
     // Define how the server handle notifications.
