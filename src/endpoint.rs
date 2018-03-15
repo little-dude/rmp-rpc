@@ -65,22 +65,20 @@ pub trait Service {
     fn handle_notification(&mut self, method: &str, params: &[Value]) -> Self::NotificationFuture;
 }
 
-/// This is a beefed-up version of [`Service`], in which the various handler methods also get
-/// access to a [`Client`], which allows them to send requests and notifications to the same
-/// msgpack-rpc client that made the original request.
+/// This is a beefed-up version of [`Service`](Service), in which the various handler
+/// methods also get access to a [`Client`](Client), which allows them to send requests and
+/// notifications to the same msgpack-rpc client that made the original request.
 pub trait ServiceWithClient {
-    /// The type of future returned by `handle_request`. See [`Service::handle_request`] for more
-    /// information.
+    /// The type of future returned by [`handle_request`](ServiceWithClient::handle_request).
     type RequestFuture: IntoStaticFuture<Item = Value, Error = Value>;
 
-    /// The type of future returned by `handle_notification`. See [`Service::handle_notification`]
-    /// for more information.
+    /// The type of future returned by [`handle_notification`](ServiceWithClient::handle_notification).
     type NotificationFuture: IntoStaticFuture<Item = (), Error = ()>;
 
     /// Handle a `MessagePack-RPC` request.
     ///
-    /// This differs from [`Service::handle_request`] in that you also get access to a [`Client`]
-    /// for sending requests and notifications.
+    /// This differs from [`Service::handle_request`](Service::handle_request) in that you also get
+    /// access to a [`Client`](Client) for sending requests and notifications.
     fn handle_request(
         &mut self,
         client: &mut Client,
@@ -90,8 +88,8 @@ pub trait ServiceWithClient {
 
     /// Handle a `MessagePack-RPC` notification.
     ///
-    /// This differs from [`Service::handle_notification`] in that you also get access to a
-    /// [`Client`] for sending requests and notifications.
+    /// This differs from [`Service::handle_notification`](Service::handle_notification) in that
+    /// you also get access to a [`Client`](Client) for sending requests and notifications.
     fn handle_notification(
         &mut self,
         client: &mut Client,
@@ -623,10 +621,12 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 
 /// A `Future` for running both a client and a server at the same time.
 ///
-/// The client part will be provided to the [`ServiceWithClient::handle_request`] and
-/// [`ServiceWithClient::handle_notification`] functions, so that the server can send back requests
-/// and notifications as part of its handling duties. You may also access the client with the
-/// [`client()`] function if you want to send additional requests.
+/// The client part will be provided to the
+/// [`ServiceWithClient::handle_request`](ServiceWithClient::handle_request) and
+/// [`ServiceWithClient::handle_notification`](ServiceWithClient::handle_notification) methods,
+/// so that the server can send back requests and notifications as part of its handling duties. You
+/// may also access the client with the [`client()`](#method.client) method if you want to send
+/// additional requests.
 ///
 /// The returned future needs to be spawned onto a task in order to actually run the server (and
 /// the client). It will run until the stream is closed; if the stream encounters an error, the
