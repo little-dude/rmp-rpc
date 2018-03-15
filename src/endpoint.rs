@@ -65,22 +65,20 @@ pub trait Service {
     fn handle_notification(&mut self, method: &str, params: &[Value]) -> Self::NotificationFuture;
 }
 
-/// This is a beefed-up version of [`Service`], in which the various handler methods also get
-/// access to a [`Client`], which allows them to send requests and notifications to the same
-/// msgpack-rpc client that made the original request.
+/// This is a beefed-up version of [`Service`](Service), in which the various handler
+/// methods also get access to a [`Client`](Client), which allows them to send requests and
+/// notifications to the same msgpack-rpc client that made the original request.
 pub trait ServiceWithClient {
-    /// The type of future returned by `handle_request`. See [`Service::handle_request`] for more
-    /// information.
+    /// The type of future returned by [`handle_request`](ServiceWithClient::handle_request).
     type RequestFuture: IntoStaticFuture<Item = Value, Error = Value>;
 
-    /// The type of future returned by `handle_notification`. See [`Service::handle_notification`]
-    /// for more information.
+    /// The type of future returned by [`handle_notification`](ServiceWithClient::handle_notification).
     type NotificationFuture: IntoStaticFuture<Item = (), Error = ()>;
 
     /// Handle a `MessagePack-RPC` request.
     ///
-    /// This differs from [`Service::handle_request`] in that you also get access to a [`Client`]
-    /// for sending requests and notifications.
+    /// This differs from [`Service::handle_request`](Service::handle_request) in that you also get
+    /// access to a [`Client`](Client) for sending requests and notifications.
     fn handle_request(
         &mut self,
         client: &mut Client,
@@ -90,8 +88,8 @@ pub trait ServiceWithClient {
 
     /// Handle a `MessagePack-RPC` notification.
     ///
-    /// This differs from [`Service::handle_notification`] in that you also get access to a
-    /// [`Client`] for sending requests and notifications.
+    /// This differs from [`Service::handle_notification`](Service::handle_notification) in that
+    /// you also get access to a [`Client`](Client) for sending requests and notifications.
     fn handle_notification(
         &mut self,
         client: &mut Client,
@@ -143,12 +141,12 @@ struct Server<S: ServiceWithClient> {
 }
 
 impl<S: ServiceWithClient> Server<S> {
-    fn new(service: S, handle: &reactor::Handle) -> Self {
+    fn new(service: S, handle: reactor::Handle) -> Self {
         let (send, recv) = mpsc::unbounded();
 
         Server {
             service,
-            handle: handle.clone(),
+            handle: handle,
             pending_responses: recv,
             response_sender: send,
         }
@@ -592,7 +590,7 @@ impl<MH: MessageHandler, T: AsyncRead + AsyncWrite> Future for InnerEndpoint<MH,
 pub fn serve<'a, S: Service + 'a, T: AsyncRead + AsyncWrite + 'a>(
     stream: T,
     service: S,
-    handle: &reactor::Handle,
+    handle: reactor::Handle,
 ) -> Box<Future<Item = (), Error = io::Error> + 'a> {
     Box::new(ServerEndpoint::new(stream, service, handle))
 }
@@ -602,7 +600,7 @@ struct ServerEndpoint<S: Service, T: AsyncRead + AsyncWrite> {
 }
 
 impl<S: Service, T: AsyncRead + AsyncWrite> ServerEndpoint<S, T> {
-    pub fn new(stream: T, service: S, handle: &reactor::Handle) -> Self {
+    pub fn new(stream: T, service: S, handle: reactor::Handle) -> Self {
         ServerEndpoint {
             inner: InnerEndpoint {
                 stream: Transport(stream.framed(Codec)),
@@ -623,10 +621,12 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 
 /// A `Future` for running both a client and a server at the same time.
 ///
-/// The client part will be provided to the [`ServiceWithClient::handle_request`] and
-/// [`ServiceWithClient::handle_notification`] functions, so that the server can send back requests
-/// and notifications as part of its handling duties. You may also access the client with the
-/// [`client()`] function if you want to send additional requests.
+/// The client part will be provided to the
+/// [`ServiceWithClient::handle_request`](ServiceWithClient::handle_request) and
+/// [`ServiceWithClient::handle_notification`](ServiceWithClient::handle_notification) methods,
+/// so that the server can send back requests and notifications as part of its handling duties. You
+/// may also access the client with the [`client()`](#method.client) method if you want to send
+/// additional requests.
 ///
 /// The returned future needs to be spawned onto a task in order to actually run the server (and
 /// the client). It will run until the stream is closed; if the stream encounters an error, the
@@ -669,7 +669,7 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 ///         // Each time the listener finds a new connection, start up an endpoint to handle
 ///         // it.
 ///         .for_each(move |(stream, _addr)| {
-///             Endpoint::new(stream, MyService, &handle)
+///             Endpoint::new(stream, MyService, handle.clone())
 ///         });
 ///
 ///     // Here's an alternative, where we take a handle to the client and spawn the endpoint
@@ -679,7 +679,7 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 ///     let server = TcpListener::bind(&addr, &handle).unwrap().incoming()
 ///         .map_err(|e| println!("error on TcpListener: {}", e))
 ///         .for_each(move |(stream, _addr)| {
-///             let end = Endpoint::new(stream, MyService, &handle);
+///             let end = Endpoint::new(stream, MyService, handle.clone());
 ///             let client = end.client();
 ///
 ///             // Spawn the endpoint. It will do its own thing, while we can use the client
@@ -709,7 +709,7 @@ pub struct Endpoint<S: ServiceWithClient, T: AsyncRead + AsyncWrite> {
 
 impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Endpoint<S, T> {
     /// Creates a new `Endpoint` on `stream`, using `service` to handle requests and notifications.
-    pub fn new(stream: T, service: S, handle: &reactor::Handle) -> Self {
+    pub fn new(stream: T, service: S, handle: reactor::Handle) -> Self {
         let (inner_client, client) = InnerClient::new();
         Endpoint {
             inner: InnerEndpoint {

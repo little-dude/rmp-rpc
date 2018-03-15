@@ -97,21 +97,21 @@ fn main() {
 
     let listener = TcpListener::bind(&addr, &handle).unwrap().incoming();
     // Spawn a "remote" endpoint on the Tokio event loop
-    let handle_clone = handle.clone();
-    handle.spawn(
+    handle.clone().spawn(
         listener
-            .for_each(move |(stream, _addr)| Endpoint::new(stream, PingPong::new(), &handle_clone))
+            .for_each(move |(stream, _addr)| Endpoint::new(stream, PingPong::new(), handle.clone()))
             .map_err(|_| ()),
     );
 
     let ping_pong_client = PingPong::new();
     let pongs = ping_pong_client.value.clone();
+    let handle = core.handle();
     core.run(
         TcpStream::connect(&addr, &handle)
             .map_err(|_| ())
             .and_then(|stream| {
                 // Make a "local" endpoint.
-                let endpoint = Endpoint::new(stream, ping_pong_client, &handle);
+                let endpoint = Endpoint::new(stream, ping_pong_client, handle.clone());
                 let client = endpoint.client();
                 let mut requests = vec![];
                 for i in 0..10 {

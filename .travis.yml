@@ -5,26 +5,15 @@ matrix:
     allow_failures:
         - rust: nightly
     include:
-        # TLS enabled
         - rust: stable
           env: RUNCMD="cargo test"
         - rust: beta
           env: RUNCMD="cargo test"
         - rust: nightly
           env: RUNCMD="cargo test --features clippy"
-
-        # TLS disabled
-        - rust: stable
-          env: RUNCMD="cargo test --no-default-features"
-        - rust: beta
-          env: RUNCMD="cargo test --no-default-features"
-        - rust: nightly
-          env: RUNCMD="cargo test --no-default-features --features clippy"
-
-        # osx jobs are so long to trigger we want to combine the normal and the --no-default-features job
         - os: osx
           rust: stable
-          env: RUNCMD="cargo test --no-default-features && cargo test"
+          env: RUNCMD="cargo test"
 
 sudo: false
 dist: trusty
