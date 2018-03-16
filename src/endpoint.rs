@@ -12,11 +12,21 @@ use message::{Message, Notification, Request};
 use message::Response as MsgPackResponse;
 use codec::Codec;
 
+// We need this IntoStaticFuture trait because the future we spawn on Tokio's event loop must have
+// the 'static lifetime.
+
+/// Class of types which can be converted into a future. This trait is only differs from
+/// [`futures::future::IntoFuture`](https://docs.rs/futures/0.1.17/futures/future/trait.IntoFuture.html)
+/// in that the returned future has the `'static` lifetime.
 pub trait IntoStaticFuture {
+    /// The future that this type can be converted into.
     type Future: Future<Item = Self::Item, Error = Self::Error> + 'static;
+    /// The item that the future may resolve with.
     type Item;
+    /// The error that the future may resolve with.
     type Error;
 
+    /// Consumes this object and produces a future.
     fn into_static_future(self) -> Self::Future;
 }
 
