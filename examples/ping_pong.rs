@@ -41,7 +41,6 @@ impl PingPong {
 // In this example, the endpoint does not handle notifications.
 impl ServiceWithClient for PingPong {
     type RequestFuture = Box<Future<Item = Value, Error = Value> + 'static>;
-    type NotificationFuture = Result<(), ()>;
 
     fn handle_request(
         &mut self,
@@ -78,12 +77,7 @@ impl ServiceWithClient for PingPong {
         }
     }
 
-    fn handle_notification(
-        &mut self,
-        _: &mut Client,
-        _: &str,
-        _: &[Value],
-    ) -> Self::NotificationFuture {
+    fn handle_notification(&mut self, _: &mut Client, _: &str, _: &[Value]) {
         unimplemented!();
     }
 }

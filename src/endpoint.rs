@@ -45,11 +45,6 @@ pub trait Service {
     /// computation or I/O that needs to be deferred.
     type RequestFuture: IntoStaticFuture<Item = Value, Error = Value>;
 
-    /// The type of future returned by `handle_notification`. This future will be spawned on the
-    /// event loop and run to completion. The result of the future will be ignored, since there is
-    /// no way to return an error to the client that sent the notification.
-    type NotificationFuture: IntoStaticFuture<Item = (), Error = ()>;
-
     /// Handle a `MessagePack-RPC` request.
     ///
     /// The name of the request is `method`, and the parameters are given in `params`.
@@ -61,8 +56,9 @@ pub trait Service {
     /// Handle a `MessagePack-RPC` notification.
     ///
     /// Note that this method is called synchronously within the main event loop, and so it should
-    /// return quickly. If you need to run a longer computation, put it in a future and return it.
-    fn handle_notification(&mut self, method: &str, params: &[Value]) -> Self::NotificationFuture;
+    /// return quickly. If you need to run a longer computation, put it in a future and spawn it on
+    /// the event loop.
+    fn handle_notification(&mut self, method: &str, params: &[Value]);
 }
 
 /// This is a beefed-up version of [`Service`](Service), in which the various handler
@@ -71,9 +67,6 @@ pub trait Service {
 pub trait ServiceWithClient {
     /// The type of future returned by [`handle_request`](ServiceWithClient::handle_request).
     type RequestFuture: IntoStaticFuture<Item = Value, Error = Value>;
-
-    /// The type of future returned by [`handle_notification`](ServiceWithClient::handle_notification).
-    type NotificationFuture: IntoStaticFuture<Item = (), Error = ()>;
 
     /// Handle a `MessagePack-RPC` request.
     ///
@@ -90,19 +83,13 @@ pub trait ServiceWithClient {
     ///
     /// This differs from [`Service::handle_notification`](Service::handle_notification) in that
     /// you also get access to a [`Client`](Client) for sending requests and notifications.
-    fn handle_notification(
-        &mut self,
-        client: &mut Client,
-        method: &str,
-        params: &[Value],
-    ) -> Self::NotificationFuture;
+    fn handle_notification(&mut self, client: &mut Client, method: &str, params: &[Value]);
 }
 
 // Given a service that doesn't require access to a client, we can also treat it as a service that
 // does require access to a client.
 impl<S: Service> ServiceWithClient for S {
     type RequestFuture = <S as Service>::RequestFuture;
-    type NotificationFuture = <S as Service>::NotificationFuture;
 
     fn handle_request(
         &mut self,
@@ -113,13 +100,8 @@ impl<S: Service> ServiceWithClient for S {
         self.handle_request(method, params)
     }
 
-    fn handle_notification(
-        &mut self,
-        _client: &mut Client,
-        method: &str,
-        params: &[Value],
-    ) -> Self::NotificationFuture {
-        self.handle_notification(method, params)
+    fn handle_notification(&mut self, _client: &mut Client, method: &str, params: &[Value]) {
+        self.handle_notification(method, params);
     }
 }
 
@@ -203,12 +185,6 @@ impl<S: ServiceWithClient> Server<S> {
                 self.handle
                     .spawn(f.then(move |result| send.unbounded_send((id, result)).map_err(|_| ())));
             }
-        }
-    }
-
-    fn spawn_notification_worker<F: Future<Item = (), Error = ()> + 'static>(&self, mut f: F) {
-        if let Ok(Async::NotReady) = f.poll() {
-            self.handle.spawn(f);
         }
     }
 }
@@ -460,8 +436,7 @@ impl<S: Service> MessageHandler for Server<S> {
                 self.spawn_request_worker(req.id, f.into_static_future());
             }
             Message::Notification(note) => {
-                let f = self.service.handle_notification(&note.method, &note.params);
-                self.spawn_notification_worker(f.into_static_future());
+                self.service.handle_notification(&note.method, &note.params);
             }
             Message::Response(_) => {
                 trace!("This endpoint doesn't handle responses, ignoring the msg.");
@@ -518,13 +493,11 @@ impl<S: ServiceWithClient> MessageHandler for ClientAndServer<S> {
                     .spawn_request_worker(req.id, f.into_static_future());
             }
             Message::Notification(note) => {
-                let f = self.server.service.handle_notification(
+                self.server.service.handle_notification(
                     &mut self.client,
                     &note.method,
                     &note.params,
                 );
-                self.server
-                    .spawn_notification_worker(f.into_static_future());
             }
             Message::Response(response) => self.inner_client.process_response(response),
         };

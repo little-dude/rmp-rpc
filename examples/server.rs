@@ -22,9 +22,6 @@ impl Service for Echo {
     // This is the type of future we send back from `handle_request`. Since we have a response
     // available immediately, there's no need to send back a "genuine" future.
     type RequestFuture = Result<Value, Value>;
-    // This is the type of future we send back from `handle_notification`. Again, no need for a
-    // "real" future.
-    type NotificationFuture = Result<(), ()>;
 
     // Define how the server handle requests.
     //
@@ -54,9 +51,8 @@ impl Service for Echo {
     // Define how the server handle notifications.
     //
     // This server just prints the method in the console.
-    fn handle_notification(&mut self, method: &str, _: &[Value]) -> Self::NotificationFuture {
+    fn handle_notification(&mut self, method: &str, _: &[Value]) {
         println!("{}", method);
-        Ok(())
     }
 }
 
