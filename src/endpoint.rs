@@ -631,11 +631,10 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 /// impl ServiceWithClient for MyService {
 /// // ...
 /// # type RequestFuture = Result<Value, Value>;
-/// # type NotificationFuture = Result<(), ()>;
 /// # fn handle_request(&mut self, _: &mut Client, _: &str, _: &[Value]) -> Self::RequestFuture {
 /// #     unimplemented!();
 /// # }
-/// # fn handle_notification(&mut self, _: &mut Client, _: &str, _: &[Value]) -> Self::NotificationFuture {
+/// # fn handle_notification(&mut self, _: &mut Client, _: &str, _: &[Value]) {
 /// #     unimplemented!();
 /// # }
 /// }
