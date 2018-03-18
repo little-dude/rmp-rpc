@@ -138,7 +138,7 @@ impl<S: ServiceWithClient> Server<S> {
 
         Server {
             service,
-            handle: handle,
+            handle,
             pending_responses: recv,
             response_sender: send,
         }
