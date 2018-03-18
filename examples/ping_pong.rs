@@ -83,7 +83,7 @@ impl ServiceWithClient for PingPong {
 }
 
 fn main() {
-    env_logger::init().unwrap();
+    env_logger::init();
 
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
     let mut core = Core::new().unwrap();

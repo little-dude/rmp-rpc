@@ -15,7 +15,7 @@ use tokio_core::net::TcpStream;
 use tokio_core::reactor::Core;
 
 fn main() {
-    env_logger::init().unwrap();
+    env_logger::init();
 
     // Create a new tokio event loop to run the client
     let mut core = Core::new().unwrap();

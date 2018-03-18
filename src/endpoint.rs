@@ -405,7 +405,7 @@ where
             Ok(AsyncSink::Ready) => return,
             // FIXME: there should probably be a retry mechanism.
             Ok(AsyncSink::NotReady(_message)) => panic!("The sink is full."),
-            Err(e) => panic!("An error occured while trying to send message: {:?}", e),
+            Err(e) => panic!("An error occured while trying to send message: {}", e),
         }
     }
 }
