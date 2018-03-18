@@ -10,21 +10,15 @@ extern crate bytes;
 extern crate futures;
 #[macro_use]
 extern crate log;
-#[cfg(feature = "native-tls")]
-extern crate native_tls;
 extern crate rmpv;
 extern crate tokio_core;
 extern crate tokio_io;
-#[cfg(feature = "tokio-tls")]
-extern crate tokio_tls;
 
 mod errors;
 mod codec;
-mod message;
-mod net;
+pub mod message;
 mod endpoint;
 
-pub use endpoint::{Ack, Client, Response, Service, ServiceBuilder};
-pub use net::{serve, ClientOnlyConnector, Connection, Connector};
-
+pub use endpoint::{serve, Ack, Client, Endpoint, IntoStaticFuture, Response, Service,
+                   ServiceWithClient};
 pub use rmpv::{Integer, Utf8String, Value};
