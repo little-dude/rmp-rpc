@@ -11,8 +11,8 @@ extern crate futures;
 #[macro_use]
 extern crate log;
 extern crate rmpv;
+extern crate tokio;
 extern crate tokio_core;
-extern crate tokio_io;
 
 mod codec;
 mod endpoint;

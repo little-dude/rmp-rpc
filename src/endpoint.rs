@@ -4,9 +4,9 @@ use std::io;
 use futures::sync::{mpsc, oneshot};
 use futures::{Async, AsyncSink, Future, IntoFuture, Poll, Sink, StartSend, Stream};
 use rmpv::Value;
+use tokio::codec::{Decoder, Framed};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_core::reactor;
-use tokio_io::codec::Framed;
-use tokio_io::{AsyncRead, AsyncWrite};
 
 use codec::Codec;
 use message::Response as MsgPackResponse;
@@ -587,7 +587,7 @@ impl<S: Service, T: AsyncRead + AsyncWrite> ServerEndpoint<S, T> {
     pub fn new(stream: T, service: S, handle: reactor::Handle) -> Self {
         ServerEndpoint {
             inner: InnerEndpoint {
-                stream: Transport(stream.framed(Codec)),
+                stream: Transport(Codec.framed(stream)),
                 handler: Server::new(service, handle),
             },
         }
@@ -696,7 +696,7 @@ impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Endpoint<S, T> {
         let (inner_client, client) = InnerClient::new();
         Endpoint {
             inner: InnerEndpoint {
-                stream: Transport(stream.framed(Codec)),
+                stream: Transport(Codec.framed(stream)),
                 handler: ClientAndServer {
                     inner_client,
                     client,
@@ -780,7 +780,7 @@ impl Client {
     pub fn new<T: AsyncRead + AsyncWrite + 'static>(stream: T, handle: &reactor::Handle) -> Self {
         let (inner_client, client) = InnerClient::new();
         let endpoint = InnerEndpoint {
-            stream: Transport(stream.framed(Codec)),
+            stream: Transport(Codec.framed(stream)),
             handler: inner_client,
         };
         // We swallow io::Errors. The client will see an error if it has any outstanding requests
