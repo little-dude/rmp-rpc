@@ -570,8 +570,8 @@ impl<MH: MessageHandler, T: AsyncRead + AsyncWrite> Future for InnerEndpoint<MH,
 pub fn serve<'a, S: Service + 'a, T: AsyncRead + AsyncWrite + 'a + Send>(
     stream: T,
     service: S,
-) -> Box<Future<Item = (), Error = io::Error> + 'a + Send> {
-    Box::new(ServerEndpoint::new(stream, service))
+) -> impl Future<Item = (), Error = io::Error> + 'a + Send {
+    ServerEndpoint::new(stream, service)
 }
 
 struct ServerEndpoint<S: Service, T: AsyncRead + AsyncWrite> {
