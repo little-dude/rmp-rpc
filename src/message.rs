@@ -3,9 +3,8 @@ use rmpv::{decode, encode, Integer, Utf8String, Value};
 use std::convert::From;
 use std::io::{self, Read};
 
-/// Represents a `MessagePack-RPC` message as described in the [specifications][specs].
-///
-/// [specs]: (https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification)
+/// Represents a `MessagePack-RPC` message as described in the
+/// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification).
 #[derive(PartialEq, Clone, Debug)]
 pub enum Message {
     Request(Request),
@@ -13,7 +12,8 @@ pub enum Message {
     Notification(Notification),
 }
 
-/// Represents a `MessagePack-RPC` request as described in the [specifications][specs].
+/// Represents a `MessagePack-RPC` request as described in the
+/// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification).
 ///
 /// A request is a message that a client sends to a server when it expects a response. Sending a
 /// request is like calling a method: it includes a method name and an array of parameters. The
@@ -29,7 +29,8 @@ pub struct Request {
     pub params: Vec<Value>,
 }
 
-/// Represents a `MessagePack-RPC` response as described in the [specifications][specs].
+/// Represents a `MessagePack-RPC` response as described in the
+/// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification).
 ///
 /// After a client sends a [`Request`], the server will send a response back.
 #[derive(PartialEq, Clone, Debug)]
@@ -40,7 +41,8 @@ pub struct Response {
     pub result: Result<Value, Value>,
 }
 
-/// Represents a `MessagePack-RPC` notification as described in the [specifications][specs].
+/// Represents a `MessagePack-RPC` notification as described in the
+/// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification).
 ///
 /// A notification is a message that a client sends to a server when it doesn't expect a response.
 /// Sending a notification is like calling a method with no return value: the notification includes
