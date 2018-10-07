@@ -1,19 +1,22 @@
 language: rust
 
+rust:
+    - stable
+    - beta
+    - nightly
+
 matrix:
     fast_finish: true
     allow_failures:
         - rust: nightly
     include:
-        - rust: stable
-          env: RUNCMD="cargo test"
-        - rust: beta
-          env: RUNCMD="cargo test"
         - rust: nightly
-          env: RUNCMD="cargo test --features clippy"
+          before_script:
+          - rustup component add clippy-preview
+          script:
+          - cargo clippy --verbose -- -D warnings
         - os: osx
           rust: stable
-          env: RUNCMD="cargo test"
 
 sudo: false
 dist: trusty
@@ -23,9 +26,6 @@ cache:
   directories:
     - target/debug/deps
     - target/debug/build
-
-script:
-  - $RUNCMD
 
 notifications:
   email: false

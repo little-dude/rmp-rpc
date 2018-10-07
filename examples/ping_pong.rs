@@ -17,8 +17,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use futures::{future, Future, Stream};
-use tokio_core::reactor::Core;
 use tokio_core::net::{TcpListener, TcpStream};
+use tokio_core::reactor::Core;
 
 use rmp_rpc::{Client, Endpoint, ServiceWithClient, Value};
 
@@ -124,6 +124,7 @@ fn main() {
                     .map(|_| ())
                     .map_err(|_| ())
             }),
-    ).unwrap();
+    )
+    .unwrap();
     println!("Received {} pongs", pongs.lock().unwrap());
 }
