@@ -40,7 +40,7 @@ impl PingPong {
 // Implement how the endpoint handles incoming requests and notifications.
 // In this example, the endpoint does not handle notifications.
 impl ServiceWithClient for PingPong {
-    type RequestFuture = Box<Future<Item = Value, Error = Value> + 'static>;
+    type RequestFuture = Box<Future<Item = Value, Error = Value> + 'static + Send>;
 
     fn handle_request(
         &mut self,

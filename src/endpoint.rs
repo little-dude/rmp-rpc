@@ -20,7 +20,7 @@ use message::{Message, Notification, Request};
 /// in that the returned future has the `'static` lifetime.
 pub trait IntoStaticFuture {
     /// The future that this type can be converted into.
-    type Future: Future<Item = Self::Item, Error = Self::Error> + 'static;
+    type Future: Future<Item = Self::Item, Error = Self::Error> + 'static + Send;
     /// The item that the future may resolve with.
     type Item;
     /// The error that the future may resolve with.
@@ -32,7 +32,7 @@ pub trait IntoStaticFuture {
 
 impl<F: IntoFuture> IntoStaticFuture for F
 where
-    <F as IntoFuture>::Future: 'static,
+    <F as IntoFuture>::Future: 'static + Send,
 {
     type Future = <F as IntoFuture>::Future;
     type Item = <F as IntoFuture>::Item;
