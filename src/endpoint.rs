@@ -44,7 +44,7 @@ where
 }
 
 /// The `Service` trait defines how a `MessagePack-RPC` server handles requests and notifications.
-pub trait Service {
+pub trait Service: Send {
     /// The type of future returned by `handle_request`. This future will be spawned on the event
     /// loop, and when it is complete then the result will be sent back to the client that made the
     /// request.
@@ -567,10 +567,10 @@ impl<MH: MessageHandler, T: AsyncRead + AsyncWrite> Future for InnerEndpoint<MH,
 ///
 /// The returned future will run until the stream is closed; if the stream encounters an error,
 /// then the future will propagate it and terminate.
-pub fn serve<'a, S: Service + 'a, T: AsyncRead + AsyncWrite + 'a>(
+pub fn serve<'a, S: Service + 'a, T: AsyncRead + AsyncWrite + 'a + Send>(
     stream: T,
     service: S,
-) -> Box<Future<Item = (), Error = io::Error> + 'a> {
+) -> Box<Future<Item = (), Error = io::Error> + 'a + Send> {
     Box::new(ServerEndpoint::new(stream, service))
 }
 
