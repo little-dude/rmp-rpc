@@ -11,14 +11,14 @@ extern crate futures;
 #[macro_use]
 extern crate log;
 extern crate rmp_rpc;
-extern crate tokio_core;
+extern crate tokio;
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use futures::{future, Future, Stream};
-use tokio_core::net::{TcpListener, TcpStream};
-use tokio_core::reactor::Core;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::runtime::Runtime;
 
 use rmp_rpc::{Client, Endpoint, ServiceWithClient, Value};
 
@@ -85,23 +85,21 @@ impl ServiceWithClient for PingPong {
 fn main() {
     env_logger::init();
 
-    let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
-    let mut core = Core::new().unwrap();
-    let handle = core.handle();
+    let mut rt = Runtime::new().unwrap();
 
-    let listener = TcpListener::bind(&addr, &handle).unwrap().incoming();
+    let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
+    let listener = TcpListener::bind(&addr).unwrap().incoming();
     // Spawn a "remote" endpoint on the Tokio event loop
-    handle.clone().spawn(
+    rt.spawn(
         listener
-            .for_each(move |(stream, _addr)| Endpoint::new(stream, PingPong::new()))
+            .for_each(move |stream| Endpoint::new(stream, PingPong::new()))
             .map_err(|_| ()),
     );
 
     let ping_pong_client = PingPong::new();
     let pongs = ping_pong_client.value.clone();
-    let handle = core.handle();
-    core.run(
-        TcpStream::connect(&addr, &handle)
+    rt.block_on(
+        TcpStream::connect(&addr)
             .map_err(|_| ())
             .and_then(|stream| {
                 // Make a "local" endpoint.
