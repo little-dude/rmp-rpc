@@ -1,8 +1,8 @@
-use std::io;
 use bytes::BytesMut;
-use tokio_io::codec::{Decoder, Encoder};
 use errors::DecodeError;
 use message::Message;
+use std::io;
+use tokio_io::codec::{Decoder, Encoder};
 
 #[derive(Debug)]
 pub struct Codec;

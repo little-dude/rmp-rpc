@@ -1,7 +1,7 @@
 use errors::*;
-use std::io::{self, Read};
 use rmpv::{decode, encode, Integer, Utf8String, Value};
 use std::convert::From;
+use std::io::{self, Read};
 
 /// Represents a `MessagePack-RPC` message as described in the [specifications][specs].
 ///

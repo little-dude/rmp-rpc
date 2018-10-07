@@ -1,5 +1,5 @@
-use std::{error, fmt, io};
 use rmpv::decode;
+use std::{error, fmt, io};
 
 /// Error while decoding a sequence of bytes into a `MessagePack-RPC` message
 #[derive(Debug)]

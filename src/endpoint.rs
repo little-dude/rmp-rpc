@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 use std::io;
 
-use futures::{Async, AsyncSink, Future, IntoFuture, Poll, Sink, StartSend, Stream};
 use futures::sync::{mpsc, oneshot};
+use futures::{Async, AsyncSink, Future, IntoFuture, Poll, Sink, StartSend, Stream};
+use rmpv::Value;
 use tokio_core::reactor;
 use tokio_io::codec::Framed;
 use tokio_io::{AsyncRead, AsyncWrite};
-use rmpv::Value;
 
-use message::{Message, Notification, Request};
-use message::Response as MsgPackResponse;
 use codec::Codec;
+use message::Response as MsgPackResponse;
+use message::{Message, Notification, Request};
 
 // We need this IntoStaticFuture trait because the future we spawn on Tokio's event loop must have
 // the 'static lifetime.
@@ -480,7 +480,8 @@ impl MessageHandler for InnerClient {
     }
 
     fn is_finished(&self) -> bool {
-        self.client_closed && self.pending_requests.is_empty()
+        self.client_closed
+            && self.pending_requests.is_empty()
             && self.pending_notifications.is_empty()
     }
 }
