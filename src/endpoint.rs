@@ -4,6 +4,7 @@ use std::io;
 use futures::sync::{mpsc, oneshot};
 use futures::{Async, AsyncSink, Future, IntoFuture, Poll, Sink, StartSend, Stream};
 use rmpv::Value;
+use tokio;
 use tokio::codec::{Decoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_core::reactor;
@@ -117,10 +118,6 @@ impl<S: Service> ServiceWithClient for S {
 
 struct Server<S: ServiceWithClient> {
     service: S,
-    // A handle for spawning new futures.
-    // TODO: this will go away once we port to futures 0.2, since then we can spawn from within the
-    // poll function
-    handle: reactor::Handle,
     // This will receive responses from the service (or possibly from whatever worker tasks that
     // the service spawned). The u32 contains the id of the request that the response is for.
     pending_responses: mpsc::UnboundedReceiver<(u32, Result<Value, Value>)>,
@@ -133,12 +130,11 @@ struct Server<S: ServiceWithClient> {
 }
 
 impl<S: ServiceWithClient> Server<S> {
-    fn new(service: S, handle: reactor::Handle) -> Self {
+    fn new(service: S, _handle: reactor::Handle) -> Self {
         let (send, recv) = mpsc::unbounded();
 
         Server {
             service,
-            handle,
             pending_responses: recv,
             response_sender: send,
         }
@@ -170,7 +166,7 @@ impl<S: ServiceWithClient> Server<S> {
         panic!("an UnboundedReceiver should never give an error");
     }
 
-    fn spawn_request_worker<F: Future<Item = Value, Error = Value> + 'static>(
+    fn spawn_request_worker<F: Future<Item = Value, Error = Value> + 'static + Send>(
         &self,
         id: u32,
         mut f: F,
@@ -192,8 +188,7 @@ impl<S: ServiceWithClient> Server<S> {
             Ok(Async::NotReady) => {
                 // Ok, we can't avoid it: spawn a future on the event loop.
                 let send = self.response_sender.clone();
-                self.handle
-                    .spawn(f.then(move |result| send.unbounded_send((id, result)).map_err(|_| ())));
+                tokio::spawn(f.then(move |result| send.unbounded_send((id, result)).map_err(|_| ())));
             }
         }
     }
