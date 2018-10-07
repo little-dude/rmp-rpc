@@ -30,7 +30,7 @@ fn main() {
             Err(())
         })
         .and_then(move |stream| {
-            let client = Client::new(stream, &handle);
+            let client = Client::new(stream);
 
             // Use the client to send a notification.
             // The future returned by client.notify() finishes when the notification

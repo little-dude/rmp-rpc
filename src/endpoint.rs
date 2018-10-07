@@ -7,7 +7,6 @@ use rmpv::Value;
 use tokio;
 use tokio::codec::{Decoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_core::reactor;
 
 use codec::Codec;
 use message::Response as MsgPackResponse;
@@ -750,7 +749,7 @@ impl Client {
     ///         .map_err(|e| println!("I/O error: {}", e))
     ///         // Once we get the connection, start a new client on it.
     ///         .and_then(move |stream| {
-    ///             let client = Client::new(stream, &handle);
+    ///             let client = Client::new(stream);
     ///
     ///             // Use the client to send a notification.
     ///             // The future returned by client.notify() finishes when the notification
@@ -773,7 +772,13 @@ impl Client {
     ///     // core.run(connect).unwrap();
     /// }
     /// ```
-    pub fn new<T: AsyncRead + AsyncWrite + 'static>(stream: T, handle: &reactor::Handle) -> Self {
+    /// # Panics
+    ///
+    /// This function will panic if the default executor is not set or if spawning
+    /// onto the default executor returns an error. To avoid the panic, use
+    ///
+    /// [`DefaultExecutor`](tokio::executor::DefaultExecutor)
+    pub fn new<T: AsyncRead + AsyncWrite + 'static + Send>(stream: T) -> Self {
         let (inner_client, client) = InnerClient::new();
         let endpoint = InnerEndpoint {
             stream: Transport(Codec.framed(stream)),
@@ -781,7 +786,7 @@ impl Client {
         };
         // We swallow io::Errors. The client will see an error if it has any outstanding requests
         // or if it tries to send anything, because the endpoint has terminated.
-        handle.spawn(
+        tokio::spawn(
             endpoint.map_err(|e| trace!("Client endpoint closed because of an error: {}", e)),
         );
         client
