@@ -731,23 +731,23 @@ impl Client {
     /// ```
     /// extern crate futures;
     /// extern crate rmp_rpc;
-    /// extern crate tokio_core;
+    /// extern crate tokio;
+    ///
+    /// use std::net::SocketAddr;
     ///
     /// use futures::Future;
-    /// use std::net::SocketAddr;
     /// use rmp_rpc::Client;
-    /// use tokio_core::net::TcpStream;
-    /// use tokio_core::reactor::Core;
+    /// use tokio::net::TcpStream;
     ///
     /// fn main() {
-    ///     let mut core = Core::new().unwrap();
     ///     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
-    ///     let handle = core.handle();
     ///
-    ///     // Open a TCP connection.
-    ///     let connect = TcpStream::connect(&addr, &handle)
-    ///         .map_err(|e| println!("I/O error: {}", e))
-    ///         // Once we get the connection, start a new client on it.
+    ///     // Create a future that connects to the server, and send a notification and a request.
+    ///     let client = TcpStream::connect(&addr)
+    ///         .or_else(|e| {
+    ///             println!("I/O error in the client: {}", e);
+    ///             Err(())
+    ///         })
     ///         .and_then(move |stream| {
     ///             let client = Client::new(stream);
     ///
@@ -756,8 +756,8 @@ impl Client {
     ///             // has been sent, in case we care about that. We can also just drop it.
     ///             client.notify("hello", &[]);
     ///
-    ///             // Use the client to send a request with the method "dostuff", and two
-    ///             // parameters: the string "foo" and the integer "42".
+    ///             // Use the client to send a request with the method "dostuff", and two parameters:
+    ///             // the string "foo" and the integer "42".
     ///             // The future returned by client.request() finishes when the response
     ///             // is received.
     ///             client
@@ -767,9 +767,10 @@ impl Client {
     ///                     Ok(())
     ///                 })
     ///         });
+    ///
     ///     // Uncomment this to run the client, blocking until the response was received and the
     ///     // message was printed.
-    ///     // core.run(connect).unwrap();
+    ///     // tokio::run(client);
     /// }
     /// ```
     /// # Panics

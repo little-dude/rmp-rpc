@@ -5,26 +5,21 @@
 extern crate env_logger;
 extern crate futures;
 extern crate rmp_rpc;
-extern crate tokio_core;
+extern crate tokio;
 
 use std::net::SocketAddr;
 
 use futures::Future;
 use rmp_rpc::Client;
-use tokio_core::net::TcpStream;
-use tokio_core::reactor::Core;
+use tokio::net::TcpStream;
 
 fn main() {
     env_logger::init();
 
-    // Create a new tokio event loop to run the client
-    let mut core = Core::new().unwrap();
-
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
-    let handle = core.handle();
 
     // Create a future that connects to the server, and send a notification and a request.
-    let client = TcpStream::connect(&addr, &handle)
+    let client = TcpStream::connect(&addr)
         .or_else(|e| {
             println!("I/O error in the client: {}", e);
             Err(())
@@ -50,8 +45,11 @@ fn main() {
         });
 
     // Run the client
-    match core.run(client) {
-        Ok(_) => println!("Client finished successfully"),
-        Err(_) => println!("Client failed"),
-    }
+    tokio::run(client.then(|result| {
+        match result {
+            Ok(_) => println!("Client finished successfully"),
+            Err(_) => println!("Client failed"),
+        }
+        result
+    }));
 }
