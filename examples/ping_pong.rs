@@ -93,7 +93,7 @@ fn main() {
     // Spawn a "remote" endpoint on the Tokio event loop
     handle.clone().spawn(
         listener
-            .for_each(move |(stream, _addr)| Endpoint::new(stream, PingPong::new(), handle.clone()))
+            .for_each(move |(stream, _addr)| Endpoint::new(stream, PingPong::new()))
             .map_err(|_| ()),
     );
 
@@ -105,7 +105,7 @@ fn main() {
             .map_err(|_| ())
             .and_then(|stream| {
                 // Make a "local" endpoint.
-                let endpoint = Endpoint::new(stream, ping_pong_client, handle.clone());
+                let endpoint = Endpoint::new(stream, ping_pong_client);
                 let client = endpoint.client();
                 let mut requests = vec![];
                 for i in 0..10 {

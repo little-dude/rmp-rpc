@@ -130,7 +130,7 @@ struct Server<S: ServiceWithClient> {
 }
 
 impl<S: ServiceWithClient> Server<S> {
-    fn new(service: S, _handle: reactor::Handle) -> Self {
+    fn new(service: S) -> Self {
         let (send, recv) = mpsc::unbounded();
 
         Server {
@@ -188,7 +188,9 @@ impl<S: ServiceWithClient> Server<S> {
             Ok(Async::NotReady) => {
                 // Ok, we can't avoid it: spawn a future on the event loop.
                 let send = self.response_sender.clone();
-                tokio::spawn(f.then(move |result| send.unbounded_send((id, result)).map_err(|_| ())));
+                tokio::spawn(
+                    f.then(move |result| send.unbounded_send((id, result)).map_err(|_| ())),
+                );
             }
         }
     }
@@ -569,9 +571,8 @@ impl<MH: MessageHandler, T: AsyncRead + AsyncWrite> Future for InnerEndpoint<MH,
 pub fn serve<'a, S: Service + 'a, T: AsyncRead + AsyncWrite + 'a>(
     stream: T,
     service: S,
-    handle: reactor::Handle,
 ) -> Box<Future<Item = (), Error = io::Error> + 'a> {
-    Box::new(ServerEndpoint::new(stream, service, handle))
+    Box::new(ServerEndpoint::new(stream, service))
 }
 
 struct ServerEndpoint<S: Service, T: AsyncRead + AsyncWrite> {
@@ -579,11 +580,11 @@ struct ServerEndpoint<S: Service, T: AsyncRead + AsyncWrite> {
 }
 
 impl<S: Service, T: AsyncRead + AsyncWrite> ServerEndpoint<S, T> {
-    pub fn new(stream: T, service: S, handle: reactor::Handle) -> Self {
+    pub fn new(stream: T, service: S) -> Self {
         ServerEndpoint {
             inner: InnerEndpoint {
                 stream: Transport(Codec.framed(stream)),
-                handler: Server::new(service, handle),
+                handler: Server::new(service),
             },
         }
     }
@@ -647,7 +648,7 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 ///         // Each time the listener finds a new connection, start up an endpoint to handle
 ///         // it.
 ///         .for_each(move |(stream, _addr)| {
-///             Endpoint::new(stream, MyService, handle.clone())
+///             Endpoint::new(stream, MyService)
 ///         });
 ///
 ///     // Here's an alternative, where we take a handle to the client and spawn the endpoint
@@ -657,7 +658,7 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 ///     let server = TcpListener::bind(&addr, &handle).unwrap().incoming()
 ///         .map_err(|e| println!("error on TcpListener: {}", e))
 ///         .for_each(move |(stream, _addr)| {
-///             let end = Endpoint::new(stream, MyService, handle.clone());
+///             let end = Endpoint::new(stream, MyService);
 ///             let client = end.client();
 ///
 ///             // Spawn the endpoint. It will do its own thing, while we can use the client
@@ -687,7 +688,7 @@ pub struct Endpoint<S: ServiceWithClient, T: AsyncRead + AsyncWrite> {
 
 impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Endpoint<S, T> {
     /// Creates a new `Endpoint` on `stream`, using `service` to handle requests and notifications.
-    pub fn new(stream: T, service: S, handle: reactor::Handle) -> Self {
+    pub fn new(stream: T, service: S) -> Self {
         let (inner_client, client) = InnerClient::new();
         Endpoint {
             inner: InnerEndpoint {
@@ -695,7 +696,7 @@ impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Endpoint<S, T> {
                 handler: ClientAndServer {
                     inner_client,
                     client,
-                    server: Server::new(service, handle),
+                    server: Server::new(service),
                 },
             },
         }
