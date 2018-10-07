@@ -614,14 +614,13 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 /// ```
 /// extern crate futures;
 /// extern crate rmp_rpc;
-/// extern crate tokio_core;
+/// extern crate tokio;
 ///
 /// use futures::{Future, Stream};
 /// use rmp_rpc::ServiceWithClient;
-/// use std::net::SocketAddr;
-/// use tokio_core::net::TcpListener;
-/// use tokio_core::reactor::Core;
 /// # use rmp_rpc::{Client, Endpoint, Value};
+/// use std::net::SocketAddr;
+/// use tokio::net::TcpListener;
 ///
 /// struct MyService;
 /// impl ServiceWithClient for MyService {
@@ -637,35 +636,39 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 ///
 /// fn main() {
 ///     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
-///     let mut core = Core::new().unwrap();
-///     let handle = core.handle();
 ///
 ///     // Here's the simplest version: we listen for incoming TCP connections and run an
 ///     // endpoint on each one.
-///     let server = TcpListener::bind(&addr, &handle).unwrap()
+///     let server = TcpListener::bind(&addr).unwrap()
 ///         .incoming()
 ///         // Each time the listener finds a new connection, start up an endpoint to handle
 ///         // it.
-///         .for_each(move |(stream, _addr)| {
-///             Endpoint::new(stream, MyService)
+///         .map_err(|e| println!("error on TcpListener: {}", e))
+///         .for_each(move |stream| {
+///             Endpoint::new(stream, MyService).map_err(|e| println!("error on endpoint {}", e))
 ///         });
+///     // Uncomment this to run the server on the tokio event loop. This is blocking.
+///     // Press ^C to stop
+///     //tokio::run(server);
 ///
 ///     // Here's an alternative, where we take a handle to the client and spawn the endpoint
 ///     // on its own task.
-///     let handle = core.handle();
 ///     let addr: SocketAddr = "127.0.0.1:65432".parse().unwrap();
-///     let server = TcpListener::bind(&addr, &handle).unwrap().incoming()
+///     let server = TcpListener::bind(&addr)
+///         .unwrap()
+///         .incoming()
 ///         .map_err(|e| println!("error on TcpListener: {}", e))
-///         .for_each(move |(stream, _addr)| {
+///         .for_each(move |stream| {
 ///             let end = Endpoint::new(stream, MyService);
 ///             let client = end.client();
 ///
 ///             // Spawn the endpoint. It will do its own thing, while we can use the client
 ///             // to send requests.
-///             handle.spawn(end.map_err(|_| ()));
+///             tokio::spawn(end.map_err(|_| ()));
 ///
 ///             // Send a request with method name "hello" and argument "world!".
-///             client.request("hello", &["world!".into()])
+///             client
+///                 .request("hello", &["world!".into()])
 ///                 .map(|response| println!("{:?}", response))
 ///                 .map_err(|e| println!("got an error: {:?}", e))
 ///             // We're returning the future that came from `client.request`. This means that
@@ -678,7 +681,7 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 ///
 ///     // Uncomment this to run the server on the tokio event loop. This is blocking.
 ///     // Press ^C to stop
-///     // core.run(server).unwrap();
+///     //tokio::run(server);
 /// }
 /// ```
 pub struct Endpoint<S: ServiceWithClient, T: AsyncRead + AsyncWrite> {
