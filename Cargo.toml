@@ -19,7 +19,6 @@ futures = "^0.1"
 log = "^0.4"
 rmpv = "^0.4"
 tokio = "^0.1"
-tokio-core = "^0.1.17"
 
 [dependencies.clippy]
 optional = true

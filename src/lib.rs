@@ -7,7 +7,6 @@ extern crate futures;
 extern crate log;
 extern crate rmpv;
 extern crate tokio;
-extern crate tokio_core;
 
 mod codec;
 mod endpoint;

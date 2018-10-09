@@ -4,14 +4,13 @@
 //! notifications to the remote endpoint.
 extern crate futures;
 extern crate rmp_rpc;
-extern crate tokio_core;
+extern crate tokio;
 
 use std::net::SocketAddr;
 
-use futures::Stream;
+use futures::{Future, Stream};
 use rmp_rpc::{serve, Service, Value};
-use tokio_core::net::TcpListener;
-use tokio_core::reactor::Core;
+use tokio::net::TcpListener;
 
 // Our server type
 #[derive(Clone)]
@@ -58,19 +57,16 @@ impl Service for Echo {
 
 fn main() {
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
-    // Create a tokio event loop.
-    let mut core = Core::new().unwrap();
-    let handle = core.handle();
-
     // Create a listener to listen for incoming TCP connections.
-    let server = TcpListener::bind(&addr, &handle)
+    let server = TcpListener::bind(&addr)
         .unwrap()
         .incoming()
         // Each time the listener finds a new connection, start up a server to handle it.
-        .for_each(move |(stream, _addr)| {
-            serve(stream, Echo, handle.clone())
+        .map_err(|e| println!("error on TcpListener: {}", e))
+        .for_each(move |stream| {
+            serve(stream, Echo).map_err(|e| println!("server error {}", e))
         });
 
     // Run the server on the tokio event loop. This is blocking. Press ^C to stop
-    core.run(server).unwrap();
+    tokio::run(server);
 }
