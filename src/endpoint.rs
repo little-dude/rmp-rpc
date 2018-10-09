@@ -533,11 +533,20 @@ impl<MH: MessageHandler, T: AsyncRead + AsyncWrite> Future for InnerEndpoint<MH,
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         // Try to flush out all the responses that are queued up. If this doesn't succeed yet, our
-        // output sink is full. In that case, we'll apply some backpressure to our input stream by
-        // not reading from it.
+        // output sink is full.
+        //
+        // TODO: Implement backpressure. If this happens we should not process new incoming
+        // messages. One way to do this would be to return Async::NotReady here, but we cannot
+        // return Async::NotReady without polling the the stream, otherwise, this future might not
+        // be re-awaken if there are new events in the stream.
+        //
+        // To quote @carllerche on Gitter:
+        //
+        // > If you don’t poll your inneer stream, you can’t return NotReady, unless you somehow
+        // > handle notifying the task some other way. Basically, you should never return `NotReady`
+        // > unless you get a `NotReady`
         if let Async::NotReady = self.handler.send_outgoing(&mut self.stream)? {
-            trace!("Sink not yet flushed, waiting...");
-            return Ok(Async::NotReady);
+            warn!("Sink not yet flushed...");
         }
 
         trace!("Polling stream.");
