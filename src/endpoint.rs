@@ -649,7 +649,7 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 ///         });
 ///     // Uncomment this to run the server on the tokio event loop. This is blocking.
 ///     // Press ^C to stop
-///     //tokio::run(server);
+///     // tokio::run(server);
 ///
 ///     // Here's an alternative, where we take a handle to the client and spawn the endpoint
 ///     // on its own task.
@@ -681,7 +681,7 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 ///
 ///     // Uncomment this to run the server on the tokio event loop. This is blocking.
 ///     // Press ^C to stop
-///     //tokio::run(server);
+///     // tokio::run(server);
 /// }
 /// ```
 pub struct Endpoint<S: ServiceWithClient, T: AsyncRead + AsyncWrite> {
