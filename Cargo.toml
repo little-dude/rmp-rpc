@@ -26,3 +26,4 @@ version = "^0.0"
 
 [dev-dependencies]
 env_logger = "^0.5"
+chrono = "^0.4"
