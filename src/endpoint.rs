@@ -147,6 +147,7 @@ impl<S: ServiceWithClient> Server<S> {
         &mut self,
         sink: &mut Transport<T>,
     ) -> Poll<(), io::Error> {
+        trace!("Server: flushing responses");
         while let Ok(poll) = self.pending_responses.poll() {
             if let Async::Ready(Some((id, result))) = poll {
                 let msg = Message::Response(MsgPackResponse { id, result });
@@ -170,11 +171,13 @@ impl<S: ServiceWithClient> Server<S> {
         id: u32,
         mut f: F,
     ) {
+        trace!("spawning a new task");
         // The simplest implementation of this function would just spawn a future immediately, but
         // as an optimization let's check if the future is immediately ready and avoid spawning in
         // that case.
         match f.poll() {
             Ok(Async::Ready(result)) => {
+                trace!("the task is already done, no need to spawn it on the event loop");
                 // An error in unbounded_send means that the receiver has been dropped, which
                 // means that the Server has stopped running. There is no meaningful way to
                 // signal an error from here (but the client should see an error anyway,
@@ -182,9 +185,11 @@ impl<S: ServiceWithClient> Server<S> {
                 let _ = self.response_sender.unbounded_send((id, Ok(result)));
             }
             Err(e) => {
+                trace!("the task failed, no need to spawn it on the event loop");
                 let _ = self.response_sender.unbounded_send((id, Err(e)));
             }
             Ok(Async::NotReady) => {
+                trace!("spawning the task on the event loop");
                 // Ok, we can't avoid it: spawn a future on the event loop.
                 let send = self.response_sender.clone();
                 tokio::spawn(
@@ -243,6 +248,7 @@ impl Future for Response {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        trace!("Response: polling");
         self.0.poll().map_err(|_| ())
     }
 }
@@ -252,6 +258,7 @@ impl Future for Ack {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        trace!("Ack: polling");
         self.0.poll().map_err(|_| ())
     }
 }
@@ -414,6 +421,7 @@ where
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        trace!("Transport: polling");
         self.0.poll()
     }
 }
@@ -532,6 +540,7 @@ impl<MH: MessageHandler, T: AsyncRead + AsyncWrite> Future for InnerEndpoint<MH,
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        trace!("InnerEndpoint: polling");
         // Try to flush out all the responses that are queued up. If this doesn't succeed yet, our
         // output sink is full. In that case, we'll apply some backpressure to our input stream by
         // not reading from it.
@@ -594,6 +603,7 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        trace!("ServerEndpoint: polling");
         self.inner.poll()
     }
 }
@@ -716,6 +726,7 @@ impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Future for Endpoint<S, T> 
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        trace!("Endpoint: polling");
         self.inner.poll()
     }
 }
@@ -838,6 +849,7 @@ impl Future for Client {
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        trace!("Client: polling");
         Ok(Async::Ready(()))
     }
 }
