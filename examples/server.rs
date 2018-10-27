@@ -105,7 +105,9 @@ fn main() {
         .for_each(move |stream| {
             info!("new connection {:?}", stream);
             info!("spawning a new Server");
-            serve(stream, Server).map_err(|e| info!("server error {}", e))
+            /// Important! The server must be spawned in the background! Otherwise, our server will
+            /// wait for each connection to be processed before accepting a new one.
+            tokio::spawn(serve(stream, Server).map_err(|e| info!("server error {}", e)))
         });
 
     // Run the server on the tokio event loop. This is blocking. Press ^C to stop
