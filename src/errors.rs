@@ -14,7 +14,7 @@ pub enum DecodeError {
 }
 
 impl fmt::Display for DecodeError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         error::Error::description(self).fmt(f)
     }
 }
@@ -28,7 +28,7 @@ impl error::Error for DecodeError {
         }
     }
 
-    fn cause(&self) -> Option<&error::Error> {
+    fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
             DecodeError::UnknownIo(ref e) => Some(e),
             _ => None,

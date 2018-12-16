@@ -17,11 +17,11 @@
 //! print(end - start)
 //! ```
 //#![feature(futures_api)]
-extern crate chrono;
-extern crate env_logger;
-extern crate futures;
-extern crate rmp_rpc;
-extern crate tokio;
+
+use env_logger;
+
+
+use tokio;
 #[macro_use]
 extern crate log;
 use std::net::SocketAddr;
@@ -63,7 +63,7 @@ impl Future for LongComputation {
 
 /// The Service trait defines how the server handles incoming requests and notifications.
 impl Service for Server {
-    type RequestFuture = Box<Future<Item = Value, Error = Value> + Send>;
+    type RequestFuture = Box<dyn Future<Item = Value, Error = Value> + Send>;
 
     /// Define how the server handle requests. This server accept requests with the method
     /// "do_long_computation" and an integer as parameter. It waits for the number of seconds specified in the parameter, and then sends back the server's time in seconds.
