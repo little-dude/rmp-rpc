@@ -41,7 +41,7 @@ impl From<io::Error> for DecodeError {
         match err.kind() {
             io::ErrorKind::UnexpectedEof => DecodeError::Truncated,
             io::ErrorKind::Other => {
-                if let Some(cause) = err.get_ref().unwrap().cause() {
+                if let Some(cause) = err.get_ref().unwrap().source() {
                     if cause.description() == "type mismatch" {
                         return DecodeError::Invalid;
                     }

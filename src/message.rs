@@ -1,4 +1,4 @@
-use errors::*;
+use crate::errors::*;
 use rmpv::{decode, encode, Integer, Utf8String, Value};
 use std::convert::From;
 use std::io::{self, Read};

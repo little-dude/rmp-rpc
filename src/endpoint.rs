@@ -8,9 +8,9 @@ use tokio;
 use tokio::codec::{Decoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use codec::Codec;
-use message::Response as MsgPackResponse;
-use message::{Message, Notification, Request};
+use crate::codec::Codec;
+use crate::message::Response as MsgPackResponse;
+use crate::message::{Message, Notification, Request};
 
 // We need this IntoStaticFuture trait because the future we spawn on Tokio's event loop must have
 // the 'static lifetime.

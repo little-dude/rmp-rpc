@@ -1,6 +1,6 @@
 use bytes::BytesMut;
-use errors::DecodeError;
-use message::Message;
+use crate::errors::DecodeError;
+use crate::message::Message;
 use std::io;
 use tokio::codec::{Decoder, Encoder};
 
@@ -51,7 +51,7 @@ impl Encoder for Codec {
 
 #[test]
 fn decode() {
-    use message::{Message, Request};
+    use crate::message::{Message, Request};
     fn try_decode(input: &[u8], rest: &[u8]) -> io::Result<Option<Message>> {
         let mut codec = Codec {};
         let mut buf = BytesMut::from(input);

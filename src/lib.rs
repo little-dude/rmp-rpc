@@ -13,7 +13,7 @@ mod endpoint;
 mod errors;
 pub mod message;
 
-pub use endpoint::{
+pub use crate::endpoint::{
     serve, Ack, Client, Endpoint, IntoStaticFuture, Response, Service, ServiceWithClient,
 };
 pub use rmpv::{Integer, Utf8String, Value};
