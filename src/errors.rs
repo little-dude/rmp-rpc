@@ -14,7 +14,7 @@ pub enum DecodeError {
 }
 
 impl fmt::Display for DecodeError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         error::Error::description(self).fmt(f)
     }
 }
@@ -28,7 +28,7 @@ impl error::Error for DecodeError {
         }
     }
 
-    fn cause(&self) -> Option<&error::Error> {
+    fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
             DecodeError::UnknownIo(ref e) => Some(e),
             _ => None,
@@ -41,7 +41,7 @@ impl From<io::Error> for DecodeError {
         match err.kind() {
             io::ErrorKind::UnexpectedEof => DecodeError::Truncated,
             io::ErrorKind::Other => {
-                if let Some(cause) = err.get_ref().unwrap().cause() {
+                if let Some(cause) = err.get_ref().unwrap().source() {
                     if cause.description() == "type mismatch" {
                         return DecodeError::Invalid;
                     }

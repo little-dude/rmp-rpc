@@ -6,12 +6,12 @@
 //!
 //! In this example, the client sends 10 pings, so we expect the pong counter to be 10.
 //!
-extern crate env_logger;
-extern crate futures;
+use env_logger;
+
 #[macro_use]
 extern crate log;
-extern crate rmp_rpc;
-extern crate tokio;
+
+
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -40,7 +40,7 @@ impl PingPong {
 // Implement how the endpoint handles incoming requests and notifications.
 // In this example, the endpoint does not handle notifications.
 impl ServiceWithClient for PingPong {
-    type RequestFuture = Box<Future<Item = Value, Error = Value> + 'static + Send>;
+    type RequestFuture = Box<dyn Future<Item = Value, Error = Value> + 'static + Send>;
 
     fn handle_request(
         &mut self,

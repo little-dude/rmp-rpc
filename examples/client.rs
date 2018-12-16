@@ -2,10 +2,10 @@
 //! or notifications, and can only send requests and notifications, and handle responses to
 //! requests it sends). `rmp-rpc` also makes it possible to have a client that also act as a server
 //! and handles incoming requests and notifications.
-extern crate env_logger;
-extern crate futures;
-extern crate rmp_rpc;
-extern crate tokio;
+use env_logger;
+
+
+use tokio;
 
 use std::net::SocketAddr;
 
