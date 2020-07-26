@@ -2,7 +2,7 @@ use bytes::BytesMut;
 use crate::errors::DecodeError;
 use crate::message::Message;
 use std::io;
-use tokio::codec::{Decoder, Encoder};
+use tokio_util::codec::{Decoder, Encoder};
 
 #[derive(Debug)]
 pub struct Codec;
@@ -38,11 +38,10 @@ impl Decoder for Codec {
     }
 }
 
-impl Encoder for Codec {
-    type Item = Message;
+impl Encoder<Message> for Codec {
     type Error = io::Error;
 
-    fn encode(&mut self, msg: Self::Item, buf: &mut BytesMut) -> io::Result<()> {
+    fn encode(&mut self, msg: Message, buf: &mut BytesMut) -> io::Result<()> {
         let bytes = msg.pack()?;
         buf.extend_from_slice(&bytes);
         Ok(())

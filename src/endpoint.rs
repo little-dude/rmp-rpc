@@ -1,47 +1,21 @@
 use std::collections::HashMap;
 use std::io;
 
-use futures::sync::{mpsc, oneshot};
-use futures::{Async, AsyncSink, Future, IntoFuture, Poll, Sink, StartSend, Stream};
+use std::task::{Context, Poll};
+use std::pin::Pin;
+use std::marker::Unpin;
+
+use futures::channel::{mpsc, oneshot};
+use futures::io::{AsyncRead, AsyncWrite};
+use futures::{Future, FutureExt, Sink, Stream, TryFutureExt, ready};
 use rmpv::Value;
 use tokio;
-use tokio::codec::{Decoder, Framed};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_util::codec::{Decoder, Framed};
+use tokio_util::compat::{Compat, FuturesAsyncWriteCompatExt};
 
 use crate::codec::Codec;
 use crate::message::Response as MsgPackResponse;
 use crate::message::{Message, Notification, Request};
-
-// We need this IntoStaticFuture trait because the future we spawn on Tokio's event loop must have
-// the 'static lifetime.
-
-/// Class of types which can be converted into a future. This trait is only differs from
-/// [`futures::future::IntoFuture`](https://docs.rs/futures/0.1.17/futures/future/trait.IntoFuture.html)
-/// in that the returned future has the `'static` lifetime.
-pub trait IntoStaticFuture {
-    /// The future that this type can be converted into.
-    type Future: Future<Item = Self::Item, Error = Self::Error> + 'static + Send;
-    /// The item that the future may resolve with.
-    type Item;
-    /// The error that the future may resolve with.
-    type Error;
-
-    /// Consumes this object and produces a future.
-    fn into_static_future(self) -> Self::Future;
-}
-
-impl<F: IntoFuture> IntoStaticFuture for F
-where
-    <F as IntoFuture>::Future: 'static + Send,
-{
-    type Future = <F as IntoFuture>::Future;
-    type Item = <F as IntoFuture>::Item;
-    type Error = <F as IntoFuture>::Error;
-
-    fn into_static_future(self) -> Self::Future {
-        self.into_future()
-    }
-}
 
 /// The `Service` trait defines how a `MessagePack-RPC` server handles requests and notifications.
 pub trait Service: Send {
@@ -53,7 +27,7 @@ pub trait Service: Send {
     /// then you can set `RequestFut` to `Result<Value, Value>` (which gets turned into a future
     /// that completes immediately). You only need to use a "real" future if there's some longer
     /// computation or I/O that needs to be deferred.
-    type RequestFuture: IntoStaticFuture<Item = Value, Error = Value>;
+    type RequestFuture: Future<Output = Result<Value, Value>> + 'static + Send;
 
     /// Handle a `MessagePack-RPC` request.
     ///
@@ -76,7 +50,7 @@ pub trait Service: Send {
 /// notifications to the same msgpack-rpc client that made the original request.
 pub trait ServiceWithClient {
     /// The type of future returned by [`handle_request`](ServiceWithClient::handle_request).
-    type RequestFuture: IntoStaticFuture<Item = Value, Error = Value>;
+    type RequestFuture: Future<Output = Result<Value, Value>> + 'static + Send;
 
     /// Handle a `MessagePack-RPC` request.
     ///
@@ -115,7 +89,7 @@ impl<S: Service> ServiceWithClient for S {
     }
 }
 
-struct Server<S: ServiceWithClient> {
+struct Server<S> {
     service: S,
     // This will receive responses from the service (or possibly from whatever worker tasks that
     // the service spawned). The u32 contains the id of the request that the response is for.
@@ -145,37 +119,37 @@ impl<S: ServiceWithClient> Server<S> {
     // (This does not necessarily mean that they were received yet.)
     fn send_responses<T: AsyncRead + AsyncWrite>(
         &mut self,
-        sink: &mut Transport<T>,
-    ) -> Poll<(), io::Error> {
+        cx: &mut Context,
+        mut sink: Pin<&mut Transport<T>>,
+    ) -> Poll<io::Result<()>> {
         trace!("Server: flushing responses");
-        while let Ok(poll) = self.pending_responses.poll() {
-            if let Async::Ready(Some((id, result))) = poll {
-                let msg = Message::Response(MsgPackResponse { id, result });
-                // FIXME: in futures 0.2, use poll_ready before reading from pending_responses, and
-                // don't panic here.
-                sink.start_send(msg).unwrap();
-            } else {
-                if let Async::Ready(None) = poll {
-                    panic!("we store the sender, it can't be dropped");
-                }
-
-                // We're done pushing all messages into the sink, now try to flush it.
-                return sink.poll_complete();
+        loop {
+            ready!(sink.as_mut().poll_ready(cx)?);
+            match Pin::new(&mut self.pending_responses).poll_next(cx) {
+                Poll::Ready(Some((id, result))) => {
+                    let msg = Message::Response(MsgPackResponse { id, result });
+                    sink.as_mut().start_send(msg).unwrap();
+                },
+                Poll::Ready(None) => panic!("we store the sender, it can't be dropped"),
+                Poll::Pending => return sink.as_mut().poll_flush(cx),
             }
         }
-        panic!("an UnboundedReceiver should never give an error");
     }
 
-    fn spawn_request_worker<F: Future<Item = Value, Error = Value> + 'static + Send>(
+    fn spawn_request_worker<F: Future<Output = Result<Value, Value>> + 'static + Send>(
         &self,
         id: u32,
-        mut f: F,
+        f: F,
     ) {
         trace!("spawning a new task");
+
+        // XXX Is this even a worthwhile optimization to reintroduce? Does it work correctly with
+        //     the no-op waker?
+        /*
         // The simplest implementation of this function would just spawn a future immediately, but
         // as an optimization let's check if the future is immediately ready and avoid spawning in
         // that case.
-        match f.poll() {
+        match f.poll(&mut Context::from_waker(futures::task::noop_waker_ref())) {
             Ok(Async::Ready(result)) => {
                 trace!("the task is already done, no need to spawn it on the event loop");
                 // An error in unbounded_send means that the receiver has been dropped, which
@@ -193,10 +167,17 @@ impl<S: ServiceWithClient> Server<S> {
                 // Ok, we can't avoid it: spawn a future on the event loop.
                 let send = self.response_sender.clone();
                 tokio::spawn(
-                    f.then(move |result| send.unbounded_send((id, result)).map_err(|_| ())),
+                    f.map(move |result| send.unbounded_send((id, result))),
                 );
             }
         }
+        */
+
+        trace!("spawning the task on the event loop");
+        let send = self.response_sender.clone();
+        tokio::spawn(
+            f.map(move |result| send.unbounded_send((id, result))),
+        );
     }
 }
 
@@ -211,8 +192,9 @@ trait MessageHandler {
     // if we managed to push them all out and flush the sink.
     fn send_outgoing<T: AsyncRead + AsyncWrite>(
         &mut self,
-        sink: &mut Transport<T>,
-    ) -> Poll<(), io::Error>;
+        cx: &mut Context,
+        sink: Pin<&mut Transport<T>>,
+    ) -> Poll<io::Result<()>>;
 
     // Is the endpoint finished? This is only relevant for clients, since servers and
     // client+servers will never voluntarily stop.
@@ -244,22 +226,24 @@ type NotificationTx = mpsc::UnboundedSender<(Notification, AckTx)>;
 type NotificationRx = mpsc::UnboundedReceiver<(Notification, AckTx)>;
 
 impl Future for Response {
-    type Item = Result<Value, Value>;
-    type Error = ();
+    type Output = Result<Value, Value>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         trace!("Response: polling");
-        self.0.poll().map_err(|_| ())
+        Poll::Ready(match ready!(Pin::new(&mut self.0).poll(cx)) {
+            Ok(Ok(v)) => Ok(v),
+            Ok(Err(v)) => Err(v),
+            Err(_) => Err(Value::Nil),
+        })
     }
 }
 
 impl Future for Ack {
-    type Item = ();
-    type Error = ();
+    type Output = Result<(), ()>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         trace!("Ack: polling");
-        self.0.poll().map_err(|_| ())
+        Pin::new(&mut self.0).poll(cx).map_err(|_| ())
     }
 }
 
@@ -291,88 +275,90 @@ impl InnerClient {
         (client, client_proxy)
     }
 
-    fn process_notifications<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
+    fn process_notifications<T: AsyncRead + AsyncWrite>(
+        &mut self,
+        cx: &mut Context,
+        mut stream: Pin<&mut Transport<T>>
+    ) -> io::Result<()> {
         // Don't try to process notifications after the notifications channel was closed, because
         // trying to read from it might cause panics.
         if self.client_closed {
-            return;
+            return Ok(());
         }
 
         trace!("Polling client notifications channel");
-        loop {
-            match self.notifications_rx.poll() {
-                Ok(Async::Ready(Some((notification, ack_sender)))) => {
+
+        while let Poll::Ready(()) = stream.as_mut().poll_ready(cx)? {
+            match Pin::new(&mut self.notifications_rx).poll_next(cx) {
+                Poll::Ready(Some((notification, ack_sender))) => {
                     trace!("Got notification from client.");
-                    stream.send(Message::Notification(notification));
+                    stream.as_mut().start_send(Message::Notification(notification))?;
                     self.pending_notifications.push(ack_sender);
-                }
-                Ok(Async::NotReady) => {
-                    trace!("No new notification from client");
-                    break;
-                }
-                Ok(Async::Ready(None)) => {
+                },
+                Poll::Ready(None) => {
                     trace!("Client closed the notifications channel.");
                     self.client_closed = true;
                     break;
-                }
-                Err(()) => {
-                    // I have no idea how this should be handled.
-                    // The documentation does not tell what may trigger an error.
-                    panic!("An error occured while polling the notifications channel.")
-                }
+                },
+                Poll::Pending => {
+                    trace!("No new notification from client");
+                    break;
+                },
             }
         }
+        Ok(())
     }
 
     fn send_messages<T: AsyncRead + AsyncWrite>(
         &mut self,
-        stream: &mut Transport<T>,
-    ) -> Poll<(), io::Error> {
-        self.process_requests(stream);
-        self.process_notifications(stream);
+        cx: &mut Context,
+        mut stream: Pin<&mut Transport<T>>,
+    ) -> Poll<io::Result<()>> {
+        self.process_requests(cx, stream.as_mut())?;
+        self.process_notifications(cx, stream.as_mut())?;
 
-        match stream.poll_complete()? {
-            Async::Ready(()) => {
+        match stream.poll_flush(cx)? {
+            Poll::Ready(()) => {
                 self.acknowledge_notifications();
-                Ok(Async::Ready(()))
+                Poll::Ready(Ok(()))
             }
-            Async::NotReady => Ok(Async::NotReady),
+            Poll::Pending => Poll::Pending,
         }
     }
 
-    fn process_requests<T: AsyncRead + AsyncWrite>(&mut self, stream: &mut Transport<T>) {
+    fn process_requests<T: AsyncRead + AsyncWrite>(
+        &mut self,
+        cx: &mut Context,
+        mut stream: Pin<&mut Transport<T>>
+    ) -> io::Result<()> {
         // Don't try to process requests after the requests channel was closed, because
         // trying to read from it might cause panics.
         if self.client_closed {
-            return;
+            return Ok(());
         }
         trace!("Polling client requests channel");
-        loop {
-            match self.requests_rx.poll() {
-                Ok(Async::Ready(Some((mut request, response_sender)))) => {
+        while let Poll::Ready(()) = stream.as_mut().poll_ready(cx)? {
+            match Pin::new(&mut self.requests_rx).poll_next(cx) {
+                Poll::Ready(Some((mut request, response_sender))) => {
                     self.request_id += 1;
                     trace!("Got request from client: {:?}", request);
                     request.id = self.request_id;
-                    stream.send(Message::Request(request));
+                    stream.as_mut().start_send(Message::Request(request))?;
                     self.pending_requests
                         .insert(self.request_id, response_sender);
                 }
-                Ok(Async::Ready(None)) => {
+                Poll::Ready(None) => {
                     trace!("Client closed the requests channel.");
                     self.client_closed = true;
                     break;
                 }
-                Ok(Async::NotReady) => {
+                Poll::Pending=> {
                     trace!("No new request from client");
                     break;
                 }
-                Err(()) => {
-                    // I have no idea how this should be handled.
-                    // The documentation does not tell what may trigger an error.
-                    panic!("An error occured while polling the requests channel");
-                }
             }
         }
+        Ok(())
     }
 
     fn process_response(&mut self, response: MsgPackResponse) {
@@ -396,49 +382,49 @@ impl InnerClient {
     }
 }
 
-struct Transport<T: AsyncRead + AsyncWrite>(Framed<T, Codec>);
+struct Transport<T>(Framed<Compat<T>, Codec>);
 
 impl<T> Transport<T>
 where
-    T: AsyncRead + AsyncWrite,
+    T: AsyncRead + AsyncWrite
 {
-    fn send(&mut self, message: Message) {
-        trace!("Sending {:?}", message);
-        match self.start_send(message) {
-            Ok(AsyncSink::Ready) => return,
-            // FIXME: there should probably be a retry mechanism.
-            Ok(AsyncSink::NotReady(_message)) => panic!("The sink is full."),
-            Err(e) => panic!("An error occured while trying to send message: {}", e),
-        }
+    fn inner(self: Pin<&mut Self>) -> Pin<&mut Framed<Compat<T>, Codec>> {
+        unsafe { self.map_unchecked_mut(|this| &mut this.0) }
     }
 }
 
 impl<T> Stream for Transport<T>
 where
-    T: AsyncRead + AsyncWrite,
+    T: AsyncRead + AsyncWrite
 {
-    type Item = Message;
-    type Error = io::Error;
+    type Item = io::Result<Message>;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         trace!("Transport: polling");
-        self.0.poll()
+        self.inner().poll_next(cx)
     }
 }
 
-impl<T> Sink for Transport<T>
+impl<T> Sink<Message> for Transport<T>
 where
-    T: AsyncRead + AsyncWrite,
+    T: AsyncRead + AsyncWrite
 {
-    type SinkItem = Message;
-    type SinkError = io::Error;
+    type Error = io::Error;
 
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
-        self.0.start_send(item)
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        self.inner().poll_ready(cx)
     }
 
-    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-        self.0.poll_complete()
+    fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
+        self.inner().start_send(item)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        self.inner().poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        self.inner().poll_close(cx)
     }
 }
 
@@ -447,7 +433,7 @@ impl<S: Service> MessageHandler for Server<S> {
         match msg {
             Message::Request(req) => {
                 let f = self.service.handle_request(&req.method, &req.params);
-                self.spawn_request_worker(req.id, f.into_static_future());
+                self.spawn_request_worker(req.id, f);
             }
             Message::Notification(note) => {
                 self.service.handle_notification(&note.method, &note.params);
@@ -460,9 +446,10 @@ impl<S: Service> MessageHandler for Server<S> {
 
     fn send_outgoing<T: AsyncRead + AsyncWrite>(
         &mut self,
-        sink: &mut Transport<T>,
-    ) -> Poll<(), io::Error> {
-        self.send_responses(sink)
+        cx: &mut Context,
+        sink: Pin<&mut Transport<T>>,
+    ) -> Poll<io::Result<()>> {
+        self.send_responses(cx, sink)
     }
 }
 
@@ -478,9 +465,10 @@ impl MessageHandler for InnerClient {
 
     fn send_outgoing<T: AsyncRead + AsyncWrite>(
         &mut self,
-        sink: &mut Transport<T>,
-    ) -> Poll<(), io::Error> {
-        self.send_messages(sink)
+        cx: &mut Context,
+        sink: Pin<&mut Transport<T>>,
+    ) -> Poll<io::Result<()>> {
+        self.send_messages(cx, sink)
     }
 
     fn is_finished(&self) -> bool {
@@ -490,7 +478,7 @@ impl MessageHandler for InnerClient {
     }
 }
 
-struct ClientAndServer<S: ServiceWithClient> {
+struct ClientAndServer<S> {
     inner_client: InnerClient,
     server: Server<S>,
     client: Client,
@@ -505,7 +493,7 @@ impl<S: ServiceWithClient> MessageHandler for ClientAndServer<S> {
                         .service
                         .handle_request(&mut self.client, &req.method, &req.params);
                 self.server
-                    .spawn_request_worker(req.id, f.into_static_future());
+                    .spawn_request_worker(req.id, f);
             }
             Message::Notification(note) => {
                 self.server.service.handle_notification(
@@ -520,54 +508,60 @@ impl<S: ServiceWithClient> MessageHandler for ClientAndServer<S> {
 
     fn send_outgoing<T: AsyncRead + AsyncWrite>(
         &mut self,
-        sink: &mut Transport<T>,
-    ) -> Poll<(), io::Error> {
-        if let Async::Ready(_) = self.server.send_responses(sink)? {
-            self.inner_client.send_messages(sink)
+        cx: &mut Context,
+        mut sink: Pin<&mut Transport<T>>,
+    ) -> Poll<io::Result<()>> {
+        if let Poll::Ready(()) = self.server.send_responses(cx, sink.as_mut())? {
+            self.inner_client.send_messages(cx, sink)
         } else {
-            Ok(Async::NotReady)
+            Poll::Pending
         }
     }
 }
 
-struct InnerEndpoint<MH: MessageHandler, T: AsyncRead + AsyncWrite> {
+struct InnerEndpoint<MH, T> {
     handler: MH,
     stream: Transport<T>,
 }
 
-impl<MH: MessageHandler, T: AsyncRead + AsyncWrite> Future for InnerEndpoint<MH, T> {
-    type Item = ();
-    type Error = io::Error;
+impl<MH: MessageHandler + Unpin, T: AsyncRead + AsyncWrite> Future for InnerEndpoint<MH, T> {
+    type Output = io::Result<()>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         trace!("InnerEndpoint: polling");
         // Try to flush out all the responses that are queued up. If this doesn't succeed yet, our
         // output sink is full. In that case, we'll apply some backpressure to our input stream by
         // not reading from it.
-        if let Async::NotReady = self.handler.send_outgoing(&mut self.stream)? {
+
+        // XXX It's sound to return unpin MH (ie handler: &mut MH) here since it is Unpin
+        let (handler, mut stream) = unsafe {
+            let this = self.get_unchecked_mut();
+            (&mut this.handler, Pin::new_unchecked(&mut this.stream))
+        };
+        if let Poll::Pending = handler.send_outgoing(cx, stream.as_mut())? {
             trace!("Sink not yet flushed, waiting...");
-            return Ok(Async::NotReady);
+            return Poll::Pending;
         }
 
         trace!("Polling stream.");
-        while let Async::Ready(msg) = self.stream.poll()? {
+        while let Poll::Ready(msg) = stream.as_mut().poll_next(cx)? {
             if let Some(msg) = msg {
-                self.handler.handle_incoming(msg);
+                handler.handle_incoming(msg);
             } else {
                 trace!("Stream closed by remote peer.");
                 // FIXME: not sure if we should still continue sending responses here. Is it
                 // possible that the client closed the stream only one way and is still waiting
                 // for response? Not for TCP at least, but maybe for other transport types?
-                return Ok(Async::Ready(()));
+                return Poll::Ready(Ok(()));
             }
         }
 
-        if self.handler.is_finished() {
+        if handler.is_finished() {
             trace!("inner client finished, exiting...");
-            Ok(Async::Ready(()))
+            Poll::Ready(Ok(()))
         } else {
             trace!("notifying the reactor that we're not done yet");
-            Ok(Async::NotReady)
+            Poll::Pending
         }
     }
 }
@@ -576,19 +570,20 @@ impl<MH: MessageHandler, T: AsyncRead + AsyncWrite> Future for InnerEndpoint<MH,
 ///
 /// The returned future will run until the stream is closed; if the stream encounters an error,
 /// then the future will propagate it and terminate.
-pub fn serve<'a, S: Service + 'a, T: AsyncRead + AsyncWrite + 'a + Send>(
+pub fn serve<'a, S: Service + Unpin + 'a, T: AsyncRead + AsyncWrite + 'a + Send>(
     stream: T,
     service: S,
-) -> impl Future<Item = (), Error = io::Error> + 'a + Send {
+) -> impl Future<Output = io::Result<()>>+ 'a + Send {
     ServerEndpoint::new(stream, service)
 }
 
-struct ServerEndpoint<S: Service, T: AsyncRead + AsyncWrite> {
+struct ServerEndpoint<S, T> {
     inner: InnerEndpoint<Server<S>, T>,
 }
 
-impl<S: Service, T: AsyncRead + AsyncWrite> ServerEndpoint<S, T> {
+impl<S: Service + Unpin, T: AsyncRead + AsyncWrite> ServerEndpoint<S, T> {
     pub fn new(stream: T, service: S) -> Self {
+        let stream = FuturesAsyncWriteCompatExt::compat_write(stream);
         ServerEndpoint {
             inner: InnerEndpoint {
                 stream: Transport(Codec.framed(stream)),
@@ -598,13 +593,12 @@ impl<S: Service, T: AsyncRead + AsyncWrite> ServerEndpoint<S, T> {
     }
 }
 
-impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
-    type Item = ();
-    type Error = io::Error;
+impl<S: Service + Unpin, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
+    type Output = io::Result<()>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         trace!("ServerEndpoint: polling");
-        self.inner.poll()
+        unsafe { self.map_unchecked_mut(|this| &mut this.inner) }.poll(cx)
     }
 }
 
@@ -622,20 +616,17 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 /// future will propagate it and terminate.
 ///
 /// ```
-/// extern crate futures;
-/// extern crate rmp_rpc;
-/// extern crate tokio;
-///
-/// use futures::{Future, Stream};
+/// use std::io;
 /// use rmp_rpc::ServiceWithClient;
 /// # use rmp_rpc::{Client, Endpoint, Value};
 /// use std::net::SocketAddr;
 /// use tokio::net::TcpListener;
+/// use tokio_util::compat::Tokio02AsyncReadCompatExt;
 ///
 /// struct MyService;
 /// impl ServiceWithClient for MyService {
 /// // ...
-/// # type RequestFuture = Result<Value, Value>;
+/// # type RequestFuture = futures::future::Ready<Result<Value, Value>>;
 /// # fn handle_request(&mut self, _: &mut Client, _: &str, _: &[Value]) -> Self::RequestFuture {
 /// #     unimplemented!();
 /// # }
@@ -644,19 +635,27 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 /// # }
 /// }
 ///
-/// fn main() {
+/// #[tokio::main]
+/// async fn main() -> io::Result<()> {
 ///     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
 ///
 ///     // Here's the simplest version: we listen for incoming TCP connections and run an
 ///     // endpoint on each one.
-///     let server = TcpListener::bind(&addr).unwrap()
-///         .incoming()
-///         // Each time the listener finds a new connection, start up an endpoint to handle
-///         // it.
-///         .map_err(|e| println!("error on TcpListener: {}", e))
-///         .for_each(move |stream| {
-///             Endpoint::new(stream, MyService).map_err(|e| println!("error on endpoint {}", e))
-///         });
+///     let server = async {
+/// #        if false {
+/// #            return Ok::<(), io::Error>(())
+/// #        }
+///         let mut listener = TcpListener::bind(&addr).await?;
+///         loop {
+///             // Each time the listener finds a new connection, start up an endpoint to handle
+///             // it.
+///             let (socket, _) = listener.accept().await?;
+///             if let Err(e) = Endpoint::new(socket.compat(), MyService).await {
+///                 println!("error on endpoint {}", e);
+///             }
+///         }
+///     };
+///
 ///     // Uncomment this to run the server on the tokio event loop. This is blocking.
 ///     // Press ^C to stop
 ///     // tokio::run(server);
@@ -664,44 +663,50 @@ impl<S: Service, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S, T> {
 ///     // Here's an alternative, where we take a handle to the client and spawn the endpoint
 ///     // on its own task.
 ///     let addr: SocketAddr = "127.0.0.1:65432".parse().unwrap();
-///     let server = TcpListener::bind(&addr)
-///         .unwrap()
-///         .incoming()
-///         .map_err(|e| println!("error on TcpListener: {}", e))
-///         .for_each(move |stream| {
-///             let end = Endpoint::new(stream, MyService);
+///     let server = async {
+/// #        if false {
+/// #            return Ok::<(), io::Error>(())
+/// #        }
+///         let mut listener = TcpListener::bind(&addr).await?;
+///         loop {
+///             let (socket, _) = listener.accept().await?;
+///             let end = Endpoint::new(socket.compat(), MyService);
 ///             let client = end.client();
 ///
 ///             // Spawn the endpoint. It will do its own thing, while we can use the client
 ///             // to send requests.
-///             tokio::spawn(end.map_err(|_| ()));
+///             tokio::spawn(end);
 ///
 ///             // Send a request with method name "hello" and argument "world!".
-///             client
-///                 .request("hello", &["world!".into()])
-///                 .map(|response| println!("{:?}", response))
-///                 .map_err(|e| println!("got an error: {:?}", e))
+///             match client.request("hello", &["world!".into()]).await {
+///                 Ok(response) => println!("{:?}", response),
+///                 Err(e) => println!("got an error: {:?}", e),
+///             };
 ///             // We're returning the future that came from `client.request`. This means that
 ///             // `server` (and therefore our entire program) will terminate once the
 ///             // response is received and the messages are printed. If you wanted to keep
 ///             // the endpoint running even after the response is received, you could
 ///             // (instead of spawning `end` on its own task) `join` the two futures (i.e.
 ///             // `end` and the one returned by `client.request`).
-///         });
+///         }
+///     };
 ///
 ///     // Uncomment this to run the server on the tokio event loop. This is blocking.
 ///     // Press ^C to stop
 ///     // tokio::run(server);
+///
+///     Ok(())
 /// }
 /// ```
-pub struct Endpoint<S: ServiceWithClient, T: AsyncRead + AsyncWrite> {
+pub struct Endpoint<S, T> {
     inner: InnerEndpoint<ClientAndServer<S>, T>,
 }
 
-impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Endpoint<S, T> {
+impl<S: ServiceWithClient + Unpin, T: AsyncRead + AsyncWrite> Endpoint<S, T> {
     /// Creates a new `Endpoint` on `stream`, using `service` to handle requests and notifications.
     pub fn new(stream: T, service: S) -> Self {
         let (inner_client, client) = InnerClient::new();
+        let stream = FuturesAsyncWriteCompatExt::compat_write(stream);
         Endpoint {
             inner: InnerEndpoint {
                 stream: Transport(Codec.framed(stream)),
@@ -721,13 +726,12 @@ impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Endpoint<S, T> {
     }
 }
 
-impl<S: ServiceWithClient, T: AsyncRead + AsyncWrite> Future for Endpoint<S, T> {
-    type Item = ();
-    type Error = io::Error;
+impl<S: ServiceWithClient + Unpin, T: AsyncRead + AsyncWrite> Future for Endpoint<S, T> {
+    type Output = io::Result<()>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         trace!("Endpoint: polling");
-        self.inner.poll()
+        unsafe { self.map_unchecked_mut(|this| &mut this.inner) }.poll(cx)
     }
 }
 
@@ -743,48 +747,39 @@ impl Client {
     /// stream.
     ///
     /// ```
-    /// extern crate futures;
-    /// extern crate rmp_rpc;
-    /// extern crate tokio;
-    ///
+    /// use std::io;
     /// use std::net::SocketAddr;
     ///
-    /// use futures::Future;
     /// use rmp_rpc::Client;
     /// use tokio::net::TcpStream;
+    /// use tokio_util::compat::Tokio02AsyncReadCompatExt;
     ///
     /// fn main() {
     ///     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
     ///
-    ///     // Create a future that connects to the server, and send a notification and a request.
-    ///     let client = TcpStream::connect(&addr)
-    ///         .or_else(|e| {
-    ///             println!("I/O error in the client: {}", e);
-    ///             Err(())
-    ///         })
-    ///         .and_then(move |stream| {
-    ///             let client = Client::new(stream);
+    ///     let f = async {
+    ///         // Create a future that connects to the server, and send a notification and a request.
+    ///         let socket = TcpStream::connect(&addr).await?;
+    ///         let client = Client::new(socket.compat());
     ///
-    ///             // Use the client to send a notification.
-    ///             // The future returned by client.notify() finishes when the notification
-    ///             // has been sent, in case we care about that. We can also just drop it.
-    ///             client.notify("hello", &[]);
+    ///         // Use the client to send a notification.
+    ///         // The future returned by client.notify() finishes when the notification
+    ///         // has been sent, in case we care about that. We can also just drop it.
+    ///         client.notify("hello", &[]);
     ///
-    ///             // Use the client to send a request with the method "dostuff", and two parameters:
-    ///             // the string "foo" and the integer "42".
-    ///             // The future returned by client.request() finishes when the response
-    ///             // is received.
-    ///             client
-    ///                 .request("dostuff", &["foo".into(), 42.into()])
-    ///                 .and_then(|response| {
-    ///                     println!("Response: {:?}", response);
-    ///                     Ok(())
-    ///                 })
-    ///         });
+    ///         // Use the client to send a request with the method "dostuff", and two parameters:
+    ///         // the string "foo" and the integer "42".
+    ///         // The future returned by client.request() finishes when the response
+    ///         // is received.
+    ///         if let Ok(resp) = client.request("dostuff", &["foo".into(), 42.into()]).await {
+    ///             println!("Response: {:?}", resp);
+    ///         }
+    ///         Ok::<_, io::Error>(())
+    ///     };
     ///
     ///     // Uncomment this to run the client, blocking until the response was received and the
     ///     // message was printed.
-    ///     // tokio::run(client);
+    ///     // tokio::run(f);
     /// }
     /// ```
     /// # Panics
@@ -795,6 +790,7 @@ impl Client {
     /// [`DefaultExecutor`](tokio::executor::DefaultExecutor)
     pub fn new<T: AsyncRead + AsyncWrite + 'static + Send>(stream: T) -> Self {
         let (inner_client, client) = InnerClient::new();
+        let stream = FuturesAsyncWriteCompatExt::compat_write(stream);
         let endpoint = InnerEndpoint {
             stream: Transport(Codec.framed(stream)),
             handler: inner_client,
@@ -845,11 +841,10 @@ impl Client {
 }
 
 impl Future for Client {
-    type Item = ();
-    type Error = io::Error;
+    type Output = io::Result<()>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
         trace!("Client: polling");
-        Ok(Async::Ready(()))
+        Poll::Ready(Ok(()))
     }
 }

@@ -16,21 +16,23 @@
 //! end = time.time()
 //! print(end - start)
 //! ```
-//#![feature(futures_api)]
-
 use env_logger;
-
 
 use tokio;
 #[macro_use]
 extern crate log;
+
+use std::io;
 use std::net::SocketAddr;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time;
 
-use futures::{future, Future, Poll, Stream};
+use futures::{future, Future, TryFutureExt};
 use rmp_rpc::{serve, Service, Value};
 use tokio::net::TcpListener;
-use tokio::timer::Delay;
+use tokio::time::{delay_until, Delay};
+use tokio_util::compat::Tokio02AsyncReadCompatExt;
 
 /// Our server type
 #[derive(Clone)]
@@ -41,49 +43,45 @@ pub struct Server;
 pub struct LongComputation(Delay);
 
 impl Future for LongComputation {
-    type Item = Value;
-    type Error = Value;
+    type Output = Result<Value, Value>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         info!("polling LongComputation");
-        self.0
-            .poll()
-            .map(|future| {
-                future.map(|()| {
-                    time::SystemTime::now()
-                        .duration_since(time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                        .into()
-                })
+        Pin::new(&mut self.0)
+            .poll(cx)
+            .map(|()| {
+                Ok(time::SystemTime::now()
+                    .duration_since(time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    .into())
             })
-            .map_err(|_| "error".into())
     }
 }
 
 /// The Service trait defines how the server handles incoming requests and notifications.
 impl Service for Server {
-    type RequestFuture = Box<dyn Future<Item = Value, Error = Value> + Send>;
+    type RequestFuture = Pin<Box<dyn Future<Output = Result<Value, Value>> + Send>>;
 
     /// Define how the server handle requests. This server accept requests with the method
     /// "do_long_computation" and an integer as parameter. It waits for the number of seconds specified in the parameter, and then sends back the server's time in seconds.
     fn handle_request(&mut self, method: &str, params: &[Value]) -> Self::RequestFuture {
         if method != "do_long_computation" {
-            return Box::new(future::err(format!("Invalid method {}", method).into()));
+            return Box::pin(future::err(format!("Invalid method {}", method).into()));
         }
         if params.len() != 1 {
-            return Box::new(future::err(
+            return Box::pin(future::err(
                 "'do_long_computation' takes one argument".into(),
             ));
         }
         if let Value::Integer(ref value) = params[0] {
             if let Some(value) = value.as_u64() {
-                return Box::new(LongComputation(Delay::new(
-                    time::Instant::now() + time::Duration::from_secs(value),
+                return Box::pin(LongComputation(delay_until(
+                    (time::Instant::now() + time::Duration::from_secs(value)).into(),
                 )));
             }
         }
-        Box::new(future::err("Argument must be an unsigned integer".into()))
+        Box::pin(future::err("Argument must be an unsigned integer".into()))
     }
 
     /// Define how the server handle notifications. This server just prints the method in the
@@ -93,23 +91,24 @@ impl Service for Server {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> io::Result<()> {
     env_logger::init();
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
     // Create a listener to listen for incoming TCP connections.
-    let server = TcpListener::bind(&addr)
-        .unwrap()
-        .incoming()
-        // Each time the listener finds a new connection, start up a server to handle it.
-        .map_err(|e| info!("error on TcpListener: {}", e))
-        .for_each(move |stream| {
-            info!("new connection {:?}", stream);
-            info!("spawning a new Server");
-            // Important! The server must be spawned in the background! Otherwise, our server will
-            // wait for each connection to be processed before accepting a new one.
-            tokio::spawn(serve(stream, Server).map_err(|e| info!("server error {}", e)))
-        });
-
-    // Run the server on the tokio event loop. This is blocking. Press ^C to stop
-    tokio::run(server);
+    let mut listener = TcpListener::bind(&addr).await?;
+    loop {
+        let socket = match listener.accept().await {
+            Ok((socket, _)) => socket,
+            Err(e) => {
+                info!("error on TcpListener: {}", e);
+                continue
+            },
+        };
+        info!("new connection {:?}", socket);
+        info!("spawning a new Server");
+        // Important! The server must be spawned in the background! Otherwise, our server will
+        // wait for each connection to be processed before accepting a new one.
+        tokio::spawn(serve(socket.compat(), Server).map_err(|e| info!("server error {}", e)));
+    }
 }

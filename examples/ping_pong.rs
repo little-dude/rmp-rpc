@@ -11,14 +11,14 @@ use env_logger;
 #[macro_use]
 extern crate log;
 
-
-
+use std::io;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use futures::{future, Future, Stream};
+use futures::{future, Future, FutureExt, TryFutureExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::runtime::Runtime;
+use tokio_util::compat::Tokio02AsyncReadCompatExt;
 
 use rmp_rpc::{Client, Endpoint, ServiceWithClient, Value};
 
@@ -40,7 +40,7 @@ impl PingPong {
 // Implement how the endpoint handles incoming requests and notifications.
 // In this example, the endpoint does not handle notifications.
 impl ServiceWithClient for PingPong {
-    type RequestFuture = Box<dyn Future<Item = Value, Error = Value> + 'static + Send>;
+    type RequestFuture = Pin<Box<dyn Future<Output = Result<Value, Value>>+ 'static + Send>>;
 
     fn handle_request(
         &mut self,
@@ -57,10 +57,10 @@ impl ServiceWithClient for PingPong {
                 let request = client
                     .request("pong", &[id.into()])
                     // After we get the "pong" back, send back an empty string.
-                    .and_then(|_| Ok("".into()))
+                    .map_ok(|_| "".into())
                     .map_err(|_| "".into());
 
-                Box::new(request)
+                Box::pin(request)
             }
             // Upon receiving a "pong" increment our pong counter and send the empty string back
             // immediately.
@@ -68,11 +68,11 @@ impl ServiceWithClient for PingPong {
                 let id = params[0].as_i64().unwrap();
                 info!("received pong({}), incrementing pong counter", id);
                 *self.value.lock().unwrap() += 1;
-                Box::new(future::ok("".into()))
+                Box::pin(future::ok("".into()))
             }
             method => {
                 let err = format!("Invalid method {}", method).into();
-                Box::new(future::err(err))
+                Box::pin(future::err(err))
             }
         }
     }
@@ -82,47 +82,46 @@ impl ServiceWithClient for PingPong {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> io::Result<()> {
     env_logger::init();
 
-    let mut rt = Runtime::new().unwrap();
-
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
-    let listener = TcpListener::bind(&addr).unwrap().incoming();
+    let mut listener = TcpListener::bind(&addr).await?;
     // Spawn a "remote" endpoint on the Tokio event loop
-    rt.spawn(
-        listener
-            .for_each(move |stream| Endpoint::new(stream, PingPong::new()))
-            .map_err(|_| ()),
-    );
+    tokio::spawn(async move {
+        loop {
+            match listener.accept().await {
+                Ok((socket, _)) => {
+                    tokio::spawn(Endpoint::new(socket.compat(), PingPong::new()));
+                },
+                Err(e) => debug!("Error accepting connection: {}", e),
+            }
+        }
+    });
 
     let ping_pong_client = PingPong::new();
     let pongs = ping_pong_client.value.clone();
-    rt.block_on(
-        TcpStream::connect(&addr)
-            .map_err(|_| ())
-            .and_then(|stream| {
-                // Make a "local" endpoint.
-                let endpoint = Endpoint::new(stream, ping_pong_client);
-                let client = endpoint.client();
-                let mut requests = vec![];
-                for i in 0..10 {
-                    requests.push(
-                        client
-                            .request("ping", &[i.into()])
-                            .and_then(|_response| Ok(())),
-                    );
-                }
 
-                // Run all of the requests, along with the "local" endpoint.
-                future::join_all(requests)
-                    // The endpoint will never finish, so this is saying that we should terminate
-                    // as soon as all of the requests are finished.
-                    .select2(endpoint.map_err(|_| ()))
-                    .map(|_| ())
-                    .map_err(|_| ())
-            }),
-    )
-    .unwrap();
+    let socket = TcpStream::connect(&addr).await?;
+    // Make a "local" endpoint.
+    let endpoint = Endpoint::new(socket.compat(), ping_pong_client);
+    let client = endpoint.client();
+
+    let mut requests = vec![];
+    for i in 0..10 {
+        requests.push(
+            client
+                .request("ping", &[i.into()])
+                .map(|_response| ()),
+        );
+    }
+
+    // Run all of the requests, along with the "local" endpoint.
+    // The endpoint will never finish, so this is saying that we should terminate
+    // as soon as all of the requests are finished.
+    future::select(future::join_all(requests), endpoint.map_err(|_| ())).await;
     println!("Received {} pongs", pongs.lock().unwrap());
+
+    Ok(())
 }

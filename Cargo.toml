@@ -15,11 +15,12 @@ version = "0.3.0"
 edition = "2018"
 
 [dependencies]
-bytes = "^0.4"
-futures = "^0.1"
+bytes = "^0.5"
+futures = "^0.3"
 log = "^0.4"
 rmpv = "^0.4"
-tokio = "^0.1"
+tokio = { version = "^0.2", features = ["rt-core"] }
+tokio-util = { version = "^0.3", features = ["codec", "compat"] }
 
 [dependencies.clippy]
 optional = true
@@ -28,3 +29,4 @@ version = "^0.0"
 [dev-dependencies]
 env_logger = "^0.5"
 chrono = "^0.4"
+tokio = { version = "^0.2", features = ["macros", "tcp", "time"] }
