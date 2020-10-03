@@ -5,7 +5,7 @@ use std::io;
 use tokio_util::codec::{Decoder, Encoder};
 
 #[derive(Debug)]
-pub struct Codec;
+pub(crate) struct Codec;
 
 impl Decoder for Codec {
     type Item = Message;

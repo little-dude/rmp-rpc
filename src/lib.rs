@@ -7,7 +7,7 @@ extern crate log;
 mod codec;
 mod endpoint;
 mod errors;
-pub mod message;
+mod message;
 
 pub use crate::endpoint::{
     serve, Ack, Client, Endpoint, Response, Service, ServiceWithClient,

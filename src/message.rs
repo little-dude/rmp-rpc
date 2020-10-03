@@ -6,7 +6,7 @@ use std::io::{self, Read};
 /// Represents a `MessagePack-RPC` message as described in the
 /// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification).
 #[derive(PartialEq, Clone, Debug)]
-pub enum Message {
+pub(crate) enum Message {
     Request(Request),
     Response(Response),
     Notification(Notification),
@@ -19,7 +19,7 @@ pub enum Message {
 /// request is like calling a method: it includes a method name and an array of parameters. The
 /// response is like the return value.
 #[derive(PartialEq, Clone, Debug)]
-pub struct Request {
+pub(crate) struct Request {
     /// The `id` is used to associate a response with a request. If a client sends a request with a
     /// particular `id`, the server should send a response with the same `id`.
     pub id: u32,
@@ -34,7 +34,7 @@ pub struct Request {
 ///
 /// After a client sends a [`Request`], the server will send a response back.
 #[derive(PartialEq, Clone, Debug)]
-pub struct Response {
+pub(crate) struct Response {
     /// The `id` of the [`Request`] that triggered this response.
     pub id: u32,
     /// The result of the [`Request`] that triggered this response.
@@ -48,7 +48,7 @@ pub struct Response {
 /// Sending a notification is like calling a method with no return value: the notification includes
 /// a method name and an array of parameters.
 #[derive(PartialEq, Clone, Debug)]
-pub struct Notification {
+pub(crate) struct Notification {
     /// A string representing the method name.
     pub method: String,
     /// An array of parameters to the method.
@@ -60,7 +60,7 @@ const RESPONSE_MESSAGE: u64 = 1;
 const NOTIFICATION_MESSAGE: u64 = 2;
 
 impl Message {
-    pub fn decode<R>(rd: &mut R) -> Result<Message, DecodeError>
+    pub(crate) fn decode<R>(rd: &mut R) -> Result<Message, DecodeError>
     where
         R: Read,
     {
