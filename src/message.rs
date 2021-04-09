@@ -72,24 +72,18 @@ impl Message {
             }
             if let Value::Integer(msg_type) = array[0] {
                 match msg_type.as_u64() {
-                    Some(REQUEST_MESSAGE) => {
-                        return Ok(Message::Request(Request::decode(array)?));
-                    }
-                    Some(RESPONSE_MESSAGE) => {
-                        return Ok(Message::Response(Response::decode(array)?));
-                    }
+                    Some(REQUEST_MESSAGE) => Ok(Message::Request(Request::decode(array)?)),
+                    Some(RESPONSE_MESSAGE) => Ok(Message::Response(Response::decode(array)?)),
                     Some(NOTIFICATION_MESSAGE) => {
-                        return Ok(Message::Notification(Notification::decode(array)?));
+                        Ok(Message::Notification(Notification::decode(array)?))
                     }
-                    _ => {
-                        return Err(DecodeError::Invalid);
-                    }
+                    _ => Err(DecodeError::Invalid),
                 }
             } else {
-                return Err(DecodeError::Invalid);
+                Err(DecodeError::Invalid)
             }
         } else {
-            return Err(DecodeError::Invalid);
+            Err(DecodeError::Invalid)
         }
     }
 
@@ -144,7 +138,7 @@ impl Notification {
         let method = if let Value::String(ref method) = array[1] {
             method
                 .as_str()
-                .and_then(|s| Some(s.to_string()))
+                .map(|s| s.to_string())
                 .ok_or(DecodeError::Invalid)?
         } else {
             return Err(DecodeError::Invalid);
@@ -168,7 +162,7 @@ impl Request {
 
         let id = if let Value::Integer(id) = array[1] {
             id.as_u64()
-                .and_then(|id| Some(id as u32))
+                .map(|id| id as u32)
                 .ok_or(DecodeError::Invalid)?
         } else {
             return Err(DecodeError::Invalid);
@@ -177,7 +171,7 @@ impl Request {
         let method = if let Value::String(ref method) = array[2] {
             method
                 .as_str()
-                .and_then(|s| Some(s.to_string()))
+                .map(|s| s.to_string())
                 .ok_or(DecodeError::Invalid)?
         } else {
             return Err(DecodeError::Invalid);
@@ -201,7 +195,7 @@ impl Response {
 
         let id = if let Value::Integer(id) = array[1] {
             id.as_u64()
-                .and_then(|id| Some(id as u32))
+                .map(|id| id as u32)
                 .ok_or(DecodeError::Invalid)?
         } else {
             return Err(DecodeError::Invalid);
@@ -239,10 +233,10 @@ fn test_decode_request() {
     {
         let bytes = Vec::from(&bytes[0..bytes.len() - 1]);
         let mut buf = io::Cursor::new(&bytes);
-        assert!(match Message::decode(&mut buf) {
-            Err(DecodeError::Truncated) => true,
-            _ => false,
-        });
+        assert!(matches!(
+            Message::decode(&mut buf),
+            Err(DecodeError::Truncated)
+        ));
     }
 
     // invalid message type
@@ -250,9 +244,9 @@ fn test_decode_request() {
         let mut bytes = Vec::from(&bytes[..]);
         bytes[1] = 5;
         let mut buf = io::Cursor::new(&bytes);
-        assert!(match Message::decode(&mut buf) {
-            Err(DecodeError::Invalid) => true,
-            _ => false,
-        });
+        assert!(matches!(
+            Message::decode(&mut buf),
+            Err(DecodeError::Invalid)
+        ));
     }
 }
