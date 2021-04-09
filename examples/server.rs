@@ -16,48 +16,23 @@
 //! end = time.time()
 //! print(end - start)
 //! ```
-use env_logger;
-
-use tokio;
 #[macro_use]
 extern crate log;
 
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::task::{Context, Poll};
 use std::time;
 
-use futures::{future, Future, TryFutureExt};
+use futures::{future, Future, FutureExt, TryFutureExt};
 use rmp_rpc::{serve, Service, Value};
 use tokio::net::TcpListener;
-use tokio::time::{delay_until, Delay};
-use tokio_util::compat::Tokio02AsyncReadCompatExt;
+use tokio::time::sleep;
+use tokio_util::compat::TokioAsyncReadCompatExt;
 
 /// Our server type
 #[derive(Clone)]
 pub struct Server;
-
-/// A future that does nothing but simulates a long computation and returns the time at which is
-/// finishes in seconds.
-pub struct LongComputation(Delay);
-
-impl Future for LongComputation {
-    type Output = Result<Value, Value>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        info!("polling LongComputation");
-        Pin::new(&mut self.0)
-            .poll(cx)
-            .map(|()| {
-                Ok(time::SystemTime::now()
-                    .duration_since(time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-                    .into())
-            })
-    }
-}
 
 /// The Service trait defines how the server handles incoming requests and notifications.
 impl Service for Server {
@@ -76,9 +51,15 @@ impl Service for Server {
         }
         if let Value::Integer(ref value) = params[0] {
             if let Some(value) = value.as_u64() {
-                return Box::pin(LongComputation(delay_until(
-                    (time::Instant::now() + time::Duration::from_secs(value)).into(),
-                )));
+                return Box::pin(sleep(time::Duration::from_secs(value)).then(|_| {
+                    future::ok(
+                        time::SystemTime::now()
+                            .duration_since(time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                            .into(),
+                    )
+                }));
             }
         }
         Box::pin(future::err("Argument must be an unsigned integer".into()))
@@ -96,14 +77,14 @@ async fn main() -> io::Result<()> {
     env_logger::init();
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
     // Create a listener to listen for incoming TCP connections.
-    let mut listener = TcpListener::bind(&addr).await?;
+    let listener = TcpListener::bind(&addr).await?;
     loop {
         let socket = match listener.accept().await {
             Ok((socket, _)) => socket,
             Err(e) => {
                 info!("error on TcpListener: {}", e);
-                continue
-            },
+                continue;
+            }
         };
         info!("new connection {:?}", socket);
         info!("spawning a new Server");

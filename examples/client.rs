@@ -2,16 +2,13 @@
 //! or notifications, and can only send requests and notifications, and handle responses to
 //! requests it sends). `rmp-rpc` also makes it possible to have a client that also act as a server
 //! and handles incoming requests and notifications.
-use env_logger;
-
-use tokio;
 
 use std::io;
 use std::net::SocketAddr;
 
 use rmp_rpc::Client;
 use tokio::net::TcpStream;
-use tokio_util::compat::Tokio02AsyncReadCompatExt;
+use tokio_util::compat::TokioAsyncReadCompatExt;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {

@@ -1,15 +1,14 @@
 use std::collections::HashMap;
 use std::io;
 
-use std::task::{Context, Poll};
-use std::pin::Pin;
 use std::marker::Unpin;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use futures::channel::{mpsc, oneshot};
 use futures::io::{AsyncRead, AsyncWrite};
-use futures::{Future, FutureExt, Sink, Stream, TryFutureExt, ready};
+use futures::{ready, Future, FutureExt, Sink, Stream, TryFutureExt};
 use rmpv::Value;
-use tokio;
 use tokio_util::codec::{Decoder, Framed};
 use tokio_util::compat::{Compat, FuturesAsyncWriteCompatExt};
 
@@ -129,7 +128,7 @@ impl<S: ServiceWithClient> Server<S> {
                 Poll::Ready(Some((id, result))) => {
                     let msg = Message::Response(MsgPackResponse { id, result });
                     sink.as_mut().start_send(msg).unwrap();
-                },
+                }
                 Poll::Ready(None) => panic!("we store the sender, it can't be dropped"),
                 Poll::Pending => return sink.as_mut().poll_flush(cx),
             }
@@ -175,9 +174,7 @@ impl<S: ServiceWithClient> Server<S> {
 
         trace!("spawning the task on the event loop");
         let send = self.response_sender.clone();
-        tokio::spawn(
-            f.map(move |result| send.unbounded_send((id, result))),
-        );
+        tokio::spawn(f.map(move |result| send.unbounded_send((id, result))));
     }
 }
 
@@ -278,7 +275,7 @@ impl InnerClient {
     fn process_notifications<T: AsyncRead + AsyncWrite>(
         &mut self,
         cx: &mut Context,
-        mut stream: Pin<&mut Transport<T>>
+        mut stream: Pin<&mut Transport<T>>,
     ) -> io::Result<()> {
         // Don't try to process notifications after the notifications channel was closed, because
         // trying to read from it might cause panics.
@@ -292,18 +289,20 @@ impl InnerClient {
             match Pin::new(&mut self.notifications_rx).poll_next(cx) {
                 Poll::Ready(Some((notification, ack_sender))) => {
                     trace!("Got notification from client.");
-                    stream.as_mut().start_send(Message::Notification(notification))?;
+                    stream
+                        .as_mut()
+                        .start_send(Message::Notification(notification))?;
                     self.pending_notifications.push(ack_sender);
-                },
+                }
                 Poll::Ready(None) => {
                     trace!("Client closed the notifications channel.");
                     self.client_closed = true;
                     break;
-                },
+                }
                 Poll::Pending => {
                     trace!("No new notification from client");
                     break;
-                },
+                }
             }
         }
         Ok(())
@@ -329,7 +328,7 @@ impl InnerClient {
     fn process_requests<T: AsyncRead + AsyncWrite>(
         &mut self,
         cx: &mut Context,
-        mut stream: Pin<&mut Transport<T>>
+        mut stream: Pin<&mut Transport<T>>,
     ) -> io::Result<()> {
         // Don't try to process requests after the requests channel was closed, because
         // trying to read from it might cause panics.
@@ -352,7 +351,7 @@ impl InnerClient {
                     self.client_closed = true;
                     break;
                 }
-                Poll::Pending=> {
+                Poll::Pending => {
                     trace!("No new request from client");
                     break;
                 }
@@ -386,7 +385,7 @@ struct Transport<T>(Framed<Compat<T>, Codec>);
 
 impl<T> Transport<T>
 where
-    T: AsyncRead + AsyncWrite
+    T: AsyncRead + AsyncWrite,
 {
     fn inner(self: Pin<&mut Self>) -> Pin<&mut Framed<Compat<T>, Codec>> {
         unsafe { self.map_unchecked_mut(|this| &mut this.0) }
@@ -395,7 +394,7 @@ where
 
 impl<T> Stream for Transport<T>
 where
-    T: AsyncRead + AsyncWrite
+    T: AsyncRead + AsyncWrite,
 {
     type Item = io::Result<Message>;
 
@@ -407,7 +406,7 @@ where
 
 impl<T> Sink<Message> for Transport<T>
 where
-    T: AsyncRead + AsyncWrite
+    T: AsyncRead + AsyncWrite,
 {
     type Error = io::Error;
 
@@ -492,8 +491,7 @@ impl<S: ServiceWithClient> MessageHandler for ClientAndServer<S> {
                     self.server
                         .service
                         .handle_request(&mut self.client, &req.method, &req.params);
-                self.server
-                    .spawn_request_worker(req.id, f);
+                self.server.spawn_request_worker(req.id, f);
             }
             Message::Notification(note) => {
                 self.server.service.handle_notification(
@@ -573,7 +571,7 @@ impl<MH: MessageHandler + Unpin, T: AsyncRead + AsyncWrite> Future for InnerEndp
 pub fn serve<'a, S: Service + Unpin + 'a, T: AsyncRead + AsyncWrite + 'a + Send>(
     stream: T,
     service: S,
-) -> impl Future<Output = io::Result<()>>+ 'a + Send {
+) -> impl Future<Output = io::Result<()>> + 'a + Send {
     ServerEndpoint::new(stream, service)
 }
 
@@ -621,7 +619,7 @@ impl<S: Service + Unpin, T: AsyncRead + AsyncWrite> Future for ServerEndpoint<S,
 /// # use rmp_rpc::{Client, Endpoint, Value};
 /// use std::net::SocketAddr;
 /// use tokio::net::TcpListener;
-/// use tokio_util::compat::Tokio02AsyncReadCompatExt;
+/// use tokio_util::compat::TokioAsyncReadCompatExt;
 ///
 /// struct MyService;
 /// impl ServiceWithClient for MyService {
@@ -752,35 +750,33 @@ impl Client {
     ///
     /// use rmp_rpc::Client;
     /// use tokio::net::TcpStream;
-    /// use tokio_util::compat::Tokio02AsyncReadCompatExt;
+    /// use tokio_util::compat::TokioAsyncReadCompatExt;
     ///
-    /// fn main() {
-    ///     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
+    /// let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
     ///
-    ///     let f = async {
-    ///         // Create a future that connects to the server, and send a notification and a request.
-    ///         let socket = TcpStream::connect(&addr).await?;
-    ///         let client = Client::new(socket.compat());
+    /// let f = async {
+    ///     // Create a future that connects to the server, and send a notification and a request.
+    ///     let socket = TcpStream::connect(&addr).await?;
+    ///     let client = Client::new(socket.compat());
     ///
-    ///         // Use the client to send a notification.
-    ///         // The future returned by client.notify() finishes when the notification
-    ///         // has been sent, in case we care about that. We can also just drop it.
-    ///         client.notify("hello", &[]);
+    ///     // Use the client to send a notification.
+    ///     // The future returned by client.notify() finishes when the notification
+    ///     // has been sent, in case we care about that. We can also just drop it.
+    ///     client.notify("hello", &[]);
     ///
-    ///         // Use the client to send a request with the method "dostuff", and two parameters:
-    ///         // the string "foo" and the integer "42".
-    ///         // The future returned by client.request() finishes when the response
-    ///         // is received.
-    ///         if let Ok(resp) = client.request("dostuff", &["foo".into(), 42.into()]).await {
-    ///             println!("Response: {:?}", resp);
-    ///         }
-    ///         Ok::<_, io::Error>(())
-    ///     };
+    ///     // Use the client to send a request with the method "dostuff", and two parameters:
+    ///     // the string "foo" and the integer "42".
+    ///     // The future returned by client.request() finishes when the response
+    ///     // is received.
+    ///     if let Ok(resp) = client.request("dostuff", &["foo".into(), 42.into()]).await {
+    ///         println!("Response: {:?}", resp);
+    ///     }
+    ///     Ok::<_, io::Error>(())
+    /// };
     ///
-    ///     // Uncomment this to run the client, blocking until the response was received and the
-    ///     // message was printed.
-    ///     // tokio::run(f);
-    /// }
+    /// // Uncomment this to run the client, blocking until the response was received and the
+    /// // message was printed.
+    /// // tokio::run(f);
     /// ```
     /// # Panics
     ///

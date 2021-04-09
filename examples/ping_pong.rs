@@ -6,8 +6,6 @@
 //!
 //! In this example, the client sends 10 pings, so we expect the pong counter to be 10.
 //!
-use env_logger;
-
 #[macro_use]
 extern crate log;
 
@@ -18,7 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use futures::{future, Future, FutureExt, TryFutureExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_util::compat::Tokio02AsyncReadCompatExt;
+use tokio_util::compat::TokioAsyncReadCompatExt;
 
 use rmp_rpc::{Client, Endpoint, ServiceWithClient, Value};
 
@@ -40,7 +38,7 @@ impl PingPong {
 // Implement how the endpoint handles incoming requests and notifications.
 // In this example, the endpoint does not handle notifications.
 impl ServiceWithClient for PingPong {
-    type RequestFuture = Pin<Box<dyn Future<Output = Result<Value, Value>>+ 'static + Send>>;
+    type RequestFuture = Pin<Box<dyn Future<Output = Result<Value, Value>> + 'static + Send>>;
 
     fn handle_request(
         &mut self,
@@ -87,14 +85,14 @@ async fn main() -> io::Result<()> {
     env_logger::init();
 
     let addr: SocketAddr = "127.0.0.1:54321".parse().unwrap();
-    let mut listener = TcpListener::bind(&addr).await?;
+    let listener = TcpListener::bind(&addr).await?;
     // Spawn a "remote" endpoint on the Tokio event loop
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
                 Ok((socket, _)) => {
                     tokio::spawn(Endpoint::new(socket.compat(), PingPong::new()));
-                },
+                }
                 Err(e) => debug!("Error accepting connection: {}", e),
             }
         }
@@ -110,11 +108,7 @@ async fn main() -> io::Result<()> {
 
     let mut requests = vec![];
     for i in 0..10 {
-        requests.push(
-            client
-                .request("ping", &[i.into()])
-                .map(|_response| ()),
-        );
+        requests.push(client.request("ping", &[i.into()]).map(|_response| ()));
     }
 
     // Run all of the requests, along with the "local" endpoint.
