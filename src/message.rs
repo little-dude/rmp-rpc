@@ -6,7 +6,7 @@ use std::io::{self, Read};
 /// Represents a `MessagePack-RPC` message as described in the
 /// [specifications](https://github.com/msgpack-rpc/msgpack-rpc/blob/master/spec.md#messagepack-rpc-protocol-specification).
 #[derive(PartialEq, Clone, Debug)]
-pub enum Message {
+pub(crate) enum Message {
     Request(Request),
     Response(Response),
     Notification(Notification),
@@ -19,7 +19,7 @@ pub enum Message {
 /// request is like calling a method: it includes a method name and an array of parameters. The
 /// response is like the return value.
 #[derive(PartialEq, Clone, Debug)]
-pub struct Request {
+pub(crate) struct Request {
     /// The `id` is used to associate a response with a request. If a client sends a request with a
     /// particular `id`, the server should send a response with the same `id`.
     pub id: u32,
@@ -34,7 +34,7 @@ pub struct Request {
 ///
 /// After a client sends a [`Request`], the server will send a response back.
 #[derive(PartialEq, Clone, Debug)]
-pub struct Response {
+pub(crate) struct Response {
     /// The `id` of the [`Request`] that triggered this response.
     pub id: u32,
     /// The result of the [`Request`] that triggered this response.
@@ -48,7 +48,7 @@ pub struct Response {
 /// Sending a notification is like calling a method with no return value: the notification includes
 /// a method name and an array of parameters.
 #[derive(PartialEq, Clone, Debug)]
-pub struct Notification {
+pub(crate) struct Notification {
     /// A string representing the method name.
     pub method: String,
     /// An array of parameters to the method.
@@ -60,7 +60,7 @@ const RESPONSE_MESSAGE: u64 = 1;
 const NOTIFICATION_MESSAGE: u64 = 2;
 
 impl Message {
-    pub fn decode<R>(rd: &mut R) -> Result<Message, DecodeError>
+    pub(crate) fn decode<R>(rd: &mut R) -> Result<Message, DecodeError>
     where
         R: Read,
     {
@@ -72,24 +72,18 @@ impl Message {
             }
             if let Value::Integer(msg_type) = array[0] {
                 match msg_type.as_u64() {
-                    Some(REQUEST_MESSAGE) => {
-                        return Ok(Message::Request(Request::decode(array)?));
-                    }
-                    Some(RESPONSE_MESSAGE) => {
-                        return Ok(Message::Response(Response::decode(array)?));
-                    }
+                    Some(REQUEST_MESSAGE) => Ok(Message::Request(Request::decode(array)?)),
+                    Some(RESPONSE_MESSAGE) => Ok(Message::Response(Response::decode(array)?)),
                     Some(NOTIFICATION_MESSAGE) => {
-                        return Ok(Message::Notification(Notification::decode(array)?));
+                        Ok(Message::Notification(Notification::decode(array)?))
                     }
-                    _ => {
-                        return Err(DecodeError::Invalid);
-                    }
+                    _ => Err(DecodeError::Invalid),
                 }
             } else {
-                return Err(DecodeError::Invalid);
+                Err(DecodeError::Invalid)
             }
         } else {
-            return Err(DecodeError::Invalid);
+            Err(DecodeError::Invalid)
         }
     }
 
@@ -144,7 +138,7 @@ impl Notification {
         let method = if let Value::String(ref method) = array[1] {
             method
                 .as_str()
-                .and_then(|s| Some(s.to_string()))
+                .map(|s| s.to_string())
                 .ok_or(DecodeError::Invalid)?
         } else {
             return Err(DecodeError::Invalid);
@@ -168,7 +162,7 @@ impl Request {
 
         let id = if let Value::Integer(id) = array[1] {
             id.as_u64()
-                .and_then(|id| Some(id as u32))
+                .map(|id| id as u32)
                 .ok_or(DecodeError::Invalid)?
         } else {
             return Err(DecodeError::Invalid);
@@ -177,7 +171,7 @@ impl Request {
         let method = if let Value::String(ref method) = array[2] {
             method
                 .as_str()
-                .and_then(|s| Some(s.to_string()))
+                .map(|s| s.to_string())
                 .ok_or(DecodeError::Invalid)?
         } else {
             return Err(DecodeError::Invalid);
@@ -201,7 +195,7 @@ impl Response {
 
         let id = if let Value::Integer(id) = array[1] {
             id.as_u64()
-                .and_then(|id| Some(id as u32))
+                .map(|id| id as u32)
                 .ok_or(DecodeError::Invalid)?
         } else {
             return Err(DecodeError::Invalid);
@@ -239,10 +233,10 @@ fn test_decode_request() {
     {
         let bytes = Vec::from(&bytes[0..bytes.len() - 1]);
         let mut buf = io::Cursor::new(&bytes);
-        assert!(match Message::decode(&mut buf) {
-            Err(DecodeError::Truncated) => true,
-            _ => false,
-        });
+        assert!(matches!(
+            Message::decode(&mut buf),
+            Err(DecodeError::Truncated)
+        ));
     }
 
     // invalid message type
@@ -250,9 +244,9 @@ fn test_decode_request() {
         let mut bytes = Vec::from(&bytes[..]);
         bytes[1] = 5;
         let mut buf = io::Cursor::new(&bytes);
-        assert!(match Message::decode(&mut buf) {
-            Err(DecodeError::Invalid) => true,
-            _ => false,
-        });
+        assert!(matches!(
+            Message::decode(&mut buf),
+            Err(DecodeError::Invalid)
+        ));
     }
 }
